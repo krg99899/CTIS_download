@@ -28,7 +28,8 @@ const EXCLUDED_DOC_PATTERNS = [
   /home.?supply|supply.?position/i,
   /patient.?facing.?material/i,
   /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
-  /\bGR\b/i          // Greek language protocols (standalone GR)
+  /\bGR\b/i,         // Greek language protocols (standalone GR)
+  /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i  // D1 documents with GRE or Track
 ];
 
 function shouldExcludeDocument(docTitle, docTypeCode) {
@@ -131,6 +132,12 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
     if (['D2', 'D3', 'D4'].some(type => titleUpper.includes(type))) {
       console.warn(`⛔ BLOCKED: Document title contains excluded type [${ctNumber}/${uuid}]. Title: ${requestedDoc.title}`);
       return res.status(403).json({ error: 'This document type is excluded from downloads' });
+    }
+
+    // Check for D1 documents with GRE or Track in title
+    if (requestedDoc.documentType === 'D1' && /(?:GRE|Track)/i.test(requestedDoc.title || '')) {
+      console.warn(`⛔ BLOCKED: D1 document with GRE or Track [${ctNumber}/${uuid}]. Title: ${requestedDoc.title}`);
+      return res.status(403).json({ error: 'This D1 document type is excluded from downloads' });
     }
 
     // Step 1 — Get the signed S3 URL from CTIS

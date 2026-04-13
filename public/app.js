@@ -23,7 +23,8 @@ const EXCLUDED_DOC_PATTERNS = [
   /home.?supply|supply.?position/i,
   /patient.?facing.?material/i,
   /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
-  /\bGR\b/i          // Greek language protocols (standalone GR)
+  /\bGR\b/i,         // Greek language protocols (standalone GR)
+  /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i  // D1 documents with GRE or Track
 ];
 
 function shouldExcludeDocument(docTitle, docTypeCode) {
@@ -1280,7 +1281,8 @@ async function bulkDownloadByTA(arg1 = null) {
               String(d.documentType).toUpperCase().includes(type) || 
               (d.title && d.title.toUpperCase().includes(type))
             );
-            return isEnglishDoc(d) && !isExcluded && !hasExcludedType;
+            const isD1WithGreOrTrack = d.documentType === 'D1' && d.title && /(?:GRE|Track)/i.test(d.title);
+            return isEnglishDoc(d) && !isExcluded && !hasExcludedType && !isD1WithGreOrTrack;
           });
           
           const nonEnCount     = allProtocols.length - englishDocs.length;
