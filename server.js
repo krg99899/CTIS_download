@@ -16,7 +16,7 @@ const CTIS_API = 'https://euclinicaltrials.eu/ctis-public-api';
 
 // Excluded Document Type Codes
 // Document type numbers to completely block
-const EXCLUDED_DOC_TYPES = ['D4'];  // D4 = Patient-facing documents
+const EXCLUDED_DOC_TYPES = ['D2', 'D3', 'D4'];  // D2/D3/D4 = Patient-facing documents
 
 // Excluded Document Types (by title pattern)
 // Documents matching these patterns will be rejected
