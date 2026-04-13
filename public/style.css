@@ -279,12 +279,12 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 20px;
   padding: 1.5rem;
-  background: var(--surface-glass);
-  border: 1px solid var(--border-glass);
+  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+  border: 1px solid var(--border-glass-hover);
   border-radius: var(--radius-lg);
   margin-bottom: 1.5rem;
   backdrop-filter: blur(10px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 .filter-group {
@@ -305,21 +305,35 @@ body {
 .primary-filters-row select {
   width: 100%;
   height: 44px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1.5px solid var(--border-glass);
+  background: linear-gradient(135deg, rgba(50, 54, 100, 0.4), rgba(70, 80, 140, 0.3));
+  border: 1.5px solid var(--accent-primary-light);
   border-radius: var(--radius-md);
   color: var(--text-primary);
+  font-weight: 500;
   padding: 0 12px;
   font-family: var(--font);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   cursor: pointer;
-  transition: all 0.2s var(--ease);
+  transition: all 0.25s var(--ease);
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+.primary-filters-row select:hover {
+  background: linear-gradient(135deg, rgba(60, 70, 120, 0.5), rgba(80, 90, 150, 0.4));
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 12px rgba(129, 140, 248, 0.2);
 }
 
 .primary-filters-row select:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 3px var(--accent-glow-strong);
   outline: none;
+  background: linear-gradient(135deg, rgba(60, 70, 120, 0.6), rgba(80, 90, 150, 0.5));
 }
 
 .primary-filters-row select:disabled {
@@ -344,19 +358,21 @@ body {
   flex: 1;
   height: 48px;
   padding: 0 18px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1.5px solid var(--border-glass);
+  background: linear-gradient(135deg, rgba(50, 54, 100, 0.4), rgba(70, 80, 140, 0.3));
+  border: 1.5px solid var(--accent-primary-light);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-family: var(--font);
   font-size: 0.95rem;
+  font-weight: 500;
   transition: all 0.25s var(--ease);
   outline: none;
 }
 .search-input-group input::placeholder { color: var(--text-muted); }
 .search-input-group input:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 3px var(--accent-glow-strong);
+  background: linear-gradient(135deg, rgba(60, 70, 120, 0.5), rgba(80, 90, 150, 0.4));
 }
 
 .btn-search {
@@ -428,26 +444,33 @@ body {
   width: 100%;
   height: 40px;
   padding: 0 12px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--border-glass);
+  background: linear-gradient(135deg, rgba(50, 54, 100, 0.35), rgba(70, 80, 140, 0.25));
+  border: 1.5px solid var(--accent-primary-light);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-family: var(--font);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   outline: none;
-  transition: border-color 0.2s var(--ease);
+  transition: all 0.2s var(--ease);
   -webkit-appearance: none;
+  appearance: none;
 }
 .filter-group select {
-  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%239ba3c7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 32px;
 }
+.filter-group select:hover {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 8px rgba(129, 140, 248, 0.15);
+  background: linear-gradient(135deg, rgba(60, 70, 120, 0.45), rgba(80, 90, 150, 0.35));
+}
 .filter-group select:focus,
 .filter-group input:focus {
-  border-color: var(--accent-primary-light);
-  box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+  background: linear-gradient(135deg, rgba(60, 70, 120, 0.5), rgba(80, 90, 150, 0.4));
 }
 
 .filter-actions {
