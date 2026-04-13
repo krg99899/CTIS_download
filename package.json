@@ -1,0 +1,15 @@
+{
+  "name": "ctis-protocol-downloader",
+  "version": "1.0.0",
+  "description": "CTIS Protocol PDF Downloader - Search and download clinical trial protocols from EU Clinical Trials Register",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "node-fetch": "^2.7.0",
+    "cors": "^2.8.5"
+  }
+}
