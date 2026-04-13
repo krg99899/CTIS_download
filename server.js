@@ -63,12 +63,33 @@ app.get('/api/retrieve/:ctNumber', async (req, res) => {
   }
 });
 
-// ─── Download document — English Protocol PDFs only ────
-// Resolves S3 URL then streams the PDF back to the browser.
+// ─── Download document — Type 104 (Protocol) Only ────
+// Validates document type BEFORE downloading — only allows Type 104 protocols
 app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
   try {
     const { ctNumber, uuid } = req.params;
     const filename = req.query.filename || `${uuid}.pdf`;
+
+    // Step 0 — VALIDATE: Document must be Type 104 (Protocol) ONLY
+    const trialResp = await fetch(`${CTIS_API}/retrieve/${ctNumber}`, {
+      method: 'GET',
+      headers: {
+        ...CTIS_HEADERS,
+        'Referer': `https://euclinicaltrials.eu/ctis-public/view/${ctNumber}?lang=en`
+      }
+    });
+    const trialData = await trialResp.json();
+    const docs = trialData.documents || [];
+    const requestedDoc = docs.find(d => d.uuid === uuid);
+
+    if (!requestedDoc) {
+      return res.status(404).json({ error: 'Document not found in trial' });
+    }
+
+    if (requestedDoc.documentType !== '104') {
+      console.warn(`⛔ BLOCKED: Attempted download of non-protocol document [${ctNumber}/${uuid}]. Type: ${requestedDoc.documentType}`);
+      return res.status(403).json({ error: 'Only Type 104 (Protocol) documents can be downloaded' });
+    }
 
     // Step 1 — Get the signed S3 URL from CTIS
     const redirectResponse = await fetch(`${CTIS_API}/documents/${ctNumber}/${uuid}/download`, {
@@ -104,7 +125,7 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
       return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF from secure storage', details: errorText });
     }
 
-    console.log(`Proxying PDF [${ctNumber}/${uuid}] — ${fileResponse.headers.get('content-length')} bytes`);
+    console.log(`✓ Proxying Protocol PDF [${ctNumber}/${uuid}] — ${fileResponse.headers.get('content-length')} bytes`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);

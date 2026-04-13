@@ -1220,16 +1220,16 @@ async function bulkDownloadByTA(arg1 = null) {
           if (englishDocs.length === 0) {
             session.skippedCount++;
           } else {
-            const trialFolder = await taFolder.getDirectoryHandle(trial.ctNumber, { create: true });
+            // Flattened: All documents in one folder, prefixed with CT number
             for (const doc of englishDocs) {
               // Skip if this specific doc was already downloaded in this session
               const alreadyDl = await dmIsDownloaded(session.id, trial.ctNumber, doc.uuid);
               if (alreadyDl) continue;
 
-              const filename = `${sanitizeFilename(doc.title)}.pdf`;
+              const filename = `${trial.ctNumber}_${sanitizeFilename(doc.title)}.pdf`;
               try {
                 const docResp = await fetchWithRetry(`${API_BASE}/api/document/${trial.ctNumber}/${doc.uuid}`);
-                await streamToFileInDirectory(trialFolder, filename, docResp);
+                await streamToFileInDirectory(taFolder, filename, docResp);
                 await dmMarkDownloaded(session.id, trial.ctNumber, doc.uuid);
                 session.downloadedCount++;
               } catch {
@@ -1458,7 +1458,7 @@ function isEnglishDoc(doc) {
       if (t.includes(m)) return false;
     }
   }
-  return true; // Include if language cannot be determined (assume EN)
+  return false; // If language cannot be determined, reject to avoid non-English docs
 }
 
 function sleep(ms) {
