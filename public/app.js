@@ -822,6 +822,16 @@ async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
     const trialData = await trialResp.json();
     const docs = trialData.documents || [];
 
+    // Debug: Log all documents to identify filtering issues
+    console.log(`[${ctNumber}] All documents:`, docs.map(d => ({
+      uuid: d.uuid,
+      type: d.documentType,
+      lang: d.language,
+      title: d.title,
+      isType104: d.documentType === '104',
+      isEnglish: isEnglishDoc(d)
+    })));
+
     // STRICT FILTER: English Protocol (type 104) ONLY — no other types
     const protocolDocs = docs.filter(d => d.documentType === '104' && isEnglishDoc(d));
 
@@ -842,6 +852,11 @@ async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
       const filename = `${sanitizeFilename(doc.title)}.pdf`;
       try {
         const docResp = await fetchWithRetry(`${API_BASE}/api/document/${ctNumber}/${doc.uuid}`);
+        if (!docResp.ok) {
+          console.error(`Document download returned ${docResp.status}:`, await docResp.text());
+          failed++;
+          continue;
+        }
         await streamToFileInDirectory(trialDirHandle, filename, docResp);
         downloaded++;
       } catch (err) {
@@ -1437,28 +1452,49 @@ function getTherapeuticAreaLabel(code) {
 
 // ── isEnglishDoc — strict English-only check ───────
 // ONLY passes if document language is English.
-// Any doc without clear English language info that also
-// has a non-English title marker is rejected.
+// Strict: Only accept truly English documents
+// Checks both explicit language metadata and title markers
 function isEnglishDoc(doc) {
+  // English language codes that are acceptable
+  const englishCodes = ['en', 'english', 'eng', 'en-us', 'en-gb', 'en_us', 'en_gb'];
+  
   if (doc.language) {
     const lang = doc.language.toLowerCase().trim();
-    return lang === 'en' || lang === 'english' || lang === 'eng' || lang.startsWith('en-');
+    // Only accept if explicitly English
+    if (!englishCodes.includes(lang) && !lang.startsWith('en-') && !lang.startsWith('en_')) {
+      // Language is explicitly set to non-English
+      return false;
+    }
   }
-  // Fallback: reject if title contains non-English language markers
+  
+  // Check title for non-English language markers
   if (doc.title) {
     const t = doc.title.toUpperCase();
+    
+    // ALL non-English language codes (expanded list with multiple patterns)
     const nonEnMarkers = [
+      // Common separators with language codes
       ' - DE', ' - FR', ' - ES', ' - IT', ' - PT', ' - NL', ' - PL',
       ' - SV', ' - DA', ' - FI', ' - NO', ' - CS', ' - HU', ' - RO',
       ' - BG', ' - HR', ' - SK', ' - SL', ' - LT', ' - LV', ' - ET',
+      ' - RU', ' - TR', ' - GR', ' - EL', ' - JA', ' - ZH', ' - KO',
+      // Parentheses patterns
       '(DE)', '(FR)', '(ES)', '(IT)', '(PT)', '(NL)', '(PL)', '(FI)',
-      '_DE.', '_FR.', '_ES.', '_NL.'
+      '(BG)', '(HR)', '(SK)', '(SL)', '(RU)', '(TR)', '(GR)', '(EL)',
+      // Underscore patterns
+      '_DE', '_FR', '_ES', '_IT', '_PT', '_NL', '_PL',
+      '_BG', '_ES', '_FR',' _IT',
+      // All uppercase codes without separators at end of string (risky but catches more)
+      ' DE.', ' FR.', ' ES.', ' IT.', ' PT.', ' NL.', ' PL.',
+      ' BG.', ' HR.', ' SK.', ' CS.', ' RO.', ' RU.', ' TR.'
     ];
+    
     for (const m of nonEnMarkers) {
       if (t.includes(m)) return false;
     }
   }
-  return true; // Accept docs without explicit language info (assume English if no non-EN markers found)
+  
+  return true; // Accept if no non-EN markers found
 }
 
 function sleep(ms) {
