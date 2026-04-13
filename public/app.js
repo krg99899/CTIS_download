@@ -9,6 +9,10 @@
 
 const API_BASE = '';  // Same origin (Express serves both)
 
+// ── Excluded Document Type Codes ────────────────────
+// Document type numbers to completely block
+const EXCLUDED_DOC_TYPES = ['D4'];  // D4 = Patient-facing documents
+
 // ── Excluded Document Types (by title pattern) ────────
 // Documents matching these patterns will be skipped entirely
 const EXCLUDED_DOC_PATTERNS = [
@@ -22,7 +26,12 @@ const EXCLUDED_DOC_PATTERNS = [
   /\bGR\b/i          // Greek language protocols (standalone GR)
 ];
 
-function shouldExcludeDocument(docTitle) {
+function shouldExcludeDocument(docTitle, docTypeCode) {
+  // Check document type code first
+  if (docTypeCode && EXCLUDED_DOC_TYPES.includes(docTypeCode)) {
+    return true;
+  }
+  // Then check title patterns
   if (!docTitle) return false;
   return EXCLUDED_DOC_PATTERNS.some(pattern => pattern.test(docTitle));
 }
@@ -664,7 +673,7 @@ function renderModal(data, ctNumber) {
   const protocolDocs = docs.filter(d => 
     d.documentType === '104' && 
     isEnglishDoc(d) && 
-    !shouldExcludeDocument(d.title)
+    !shouldExcludeDocument(d.title, d.documentType)
   );
 
   const taLabel = (info.partOneTherapeuticAreas || '').replace(/Diseases \[C\] - /g, '').replace(/ \[C\d+\]/g, '') || 'Not specified';
@@ -858,7 +867,7 @@ async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
     const protocolDocs = docs.filter(d => 
       d.documentType === '104' && 
       isEnglishDoc(d) && 
-      !shouldExcludeDocument(d.title)
+      !shouldExcludeDocument(d.title, d.documentType)
     );
 
     if (protocolDocs.length === 0) {
@@ -955,7 +964,7 @@ async function batchDownloadVisible() {
       const protocolDocs = docs.filter(d => 
         d.documentType === '104' && 
         isEnglishDoc(d) && 
-        !shouldExcludeDocument(d.title)
+        !shouldExcludeDocument(d.title, d.documentType)
       );
 
       if (protocolDocs.length === 0) {
@@ -1258,7 +1267,7 @@ async function bulkDownloadByTA(arg1 = null) {
 
           // STRICT: Type 104 (Protocol), English ONLY, skip excluded types. No other types touch the filesystem.
           const allProtocols   = docs.filter(d => d.documentType === '104');
-          const englishDocs    = allProtocols.filter(d => isEnglishDoc(d) && !shouldExcludeDocument(d.title));
+          const englishDocs    = allProtocols.filter(d => isEnglishDoc(d) && !shouldExcludeDocument(d.title, d.documentType));
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;
 
