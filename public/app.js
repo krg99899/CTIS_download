@@ -1265,11 +1265,30 @@ async function bulkDownloadByTA(arg1 = null) {
           const trialData = await trialResp.json();
           const docs = trialData.documents || [];
 
-          // STRICT: Type 104 (Protocol), English ONLY, skip excluded types. No other types touch the filesystem.
-          const allProtocols   = docs.filter(d => d.documentType === '104');
-          const englishDocs    = allProtocols.filter(d => isEnglishDoc(d) && !shouldExcludeDocument(d.title, d.documentType));
+          // Debug: Log all documents found
+          if (docs.length > 0) {
+            console.log(`[${trial.ctNumber}] Found ${docs.length} total documents. Types: ${docs.map(d => d.documentType).join(', ')}`);
+          }
+
+          // STRICT: Type 104 (Protocol), English ONLY, skip D2/D3/D4 and other excluded types
+          const allProtocols   = docs.filter(d => d.documentType === '104' || String(d.documentType) === '104');
+          
+          // Double-check: exclude any document with D2, D3, D4 in title or type
+          const englishDocs    = allProtocols.filter(d => {
+            const isExcluded = shouldExcludeDocument(d.title, d.documentType);
+            const hasExcludedType = ['D2', 'D3', 'D4'].some(type => 
+              String(d.documentType).toUpperCase().includes(type) || 
+              (d.title && d.title.toUpperCase().includes(type))
+            );
+            return isEnglishDoc(d) && !isExcluded && !hasExcludedType;
+          });
+          
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;
+
+          if (allProtocols.length > 0 && englishDocs.length > 0) {
+            console.log(`[${trial.ctNumber}] After filtering: ${englishDocs.length}/${allProtocols.length} documents kept`);
+          }
 
           if (englishDocs.length === 0) {
             session.skippedCount++;
@@ -1283,10 +1302,17 @@ async function bulkDownloadByTA(arg1 = null) {
               const filename = `${trial.ctNumber}_${sanitizeFilename(doc.title)}.pdf`;
               try {
                 const docResp = await fetchWithRetry(`${API_BASE}/api/document/${trial.ctNumber}/${doc.uuid}`);
+                if (!docResp.ok) {
+                  console.error(`Document download failed [${trial.ctNumber}/${doc.uuid}]: ${docResp.status}`);
+                  session.failedCount++;
+                  continue;
+                }
                 await streamToFileInDirectory(taFolder, filename, docResp);
                 await dmMarkDownloaded(session.id, trial.ctNumber, doc.uuid);
                 session.downloadedCount++;
-              } catch {
+                console.log(`✓ Downloaded: ${filename}`);
+              } catch (err) {
+                console.error(`Failed to download [${trial.ctNumber}/${doc.uuid}]:`, err.message);
                 session.failedCount++;
               }
             }
