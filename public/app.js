@@ -1042,7 +1042,11 @@ async function onBulkTAChange() {
   }
 }
 
-async function bulkDownloadByTA(resumeSession = null) {
+async function bulkDownloadByTA(arg1 = null) {
+  // If called from addEventListener, arg1 is an Event. If called from Resume, it's a Session object.
+  const isSession = arg1 && typeof arg1 === 'object' && arg1.id && arg1.taCode;
+  const resumeSession = isSession ? arg1 : null;
+
   const taCode = resumeSession ? resumeSession.taCode : els.bulkTA.value;
   if (!taCode) return;
 
@@ -1051,8 +1055,19 @@ async function bulkDownloadByTA(resumeSession = null) {
     return;
   }
 
-  const dirHandle = await getDirectoryHandle();
-  if (!dirHandle) return;
+  let dirHandle;
+  try {
+    dirHandle = await getDirectoryHandle();
+  } catch (err) {
+    console.error('Directory picker error:', err);
+    showToast('error', 'Folder Access Error', 'Unable to access selected folder. Please try again.');
+    return;
+  }
+  
+  if (!dirHandle) {
+    // User cancelled or denied permission
+    return;
+  }
 
   const excludeSuspended  = resumeSession ? resumeSession.excludeSuspended  : els.bulkExcludeSuspended.checked;
   const excludeTerminated = resumeSession ? resumeSession.excludeTerminated : els.bulkExcludeTerminated.checked;
