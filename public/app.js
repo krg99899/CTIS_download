@@ -9,6 +9,24 @@
 
 const API_BASE = '';  // Same origin (Express serves both)
 
+// ── Excluded Document Types (by title pattern) ────────
+// Documents matching these patterns will be skipped entirely
+const EXCLUDED_DOC_PATTERNS = [
+  /patient.?facing/i,
+  /eDiary|e-diary/i,
+  /subject.?questionnaire/i,
+  /home.?supply.?position/i,
+  /home.?supply|supply.?position/i,
+  /patient.?facing.?material/i,
+  /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
+  /\bGR\b/i          // Greek language protocols (standalone GR)
+];
+
+function shouldExcludeDocument(docTitle) {
+  if (!docTitle) return false;
+  return EXCLUDED_DOC_PATTERNS.some(pattern => pattern.test(docTitle));
+}
+
 // ── Indications by Therapeutic Area ──────────────────
 const TA_INDICATIONS = {
   C01: ['Bacterial pneumonia','Urinary tract infection','Sepsis','Tuberculosis','Skin and soft tissue infection','Intra-abdominal infection','Bloodstream infection','Meningitis','Osteomyelitis','Endocarditis','Candidiasis','Aspergillosis','Cryptococcosis','Fungal infection NOS'],
@@ -642,8 +660,12 @@ async function openTrialModal(ctNumber) {
 function renderModal(data, ctNumber) {
   const info = data.authorizedPartI || {};
   const docs = data.documents || [];
-  // STRICT: Protocol only (type 104) — all other types excluded
-  const protocolDocs = docs.filter(d => d.documentType === '104' && isEnglishDoc(d));
+  // STRICT: Protocol only (type 104), English, and not excluded types
+  const protocolDocs = docs.filter(d => 
+    d.documentType === '104' && 
+    isEnglishDoc(d) && 
+    !shouldExcludeDocument(d.title)
+  );
 
   const taLabel = (info.partOneTherapeuticAreas || '').replace(/Diseases \[C\] - /g, '').replace(/ \[C\d+\]/g, '') || 'Not specified';
 
@@ -832,8 +854,12 @@ async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
       isEnglish: isEnglishDoc(d)
     })));
 
-    // STRICT FILTER: English Protocol (type 104) ONLY — no other types
-    const protocolDocs = docs.filter(d => d.documentType === '104' && isEnglishDoc(d));
+    // STRICT FILTER: English Protocol (type 104) ONLY — skip excluded types
+    const protocolDocs = docs.filter(d => 
+      d.documentType === '104' && 
+      isEnglishDoc(d) && 
+      !shouldExcludeDocument(d.title)
+    );
 
     if (protocolDocs.length === 0) {
       btnEl.innerHTML = 'No EN protocols';
@@ -925,8 +951,12 @@ async function batchDownloadVisible() {
       const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${trial.ctNumber}`);
       const trialData = await trialResp.json();
       const docs = trialData.documents || [];
-      // STRICT: English Protocol (104) ONLY
-      const protocolDocs = docs.filter(d => d.documentType === '104' && isEnglishDoc(d));
+      // STRICT: English Protocol (104) ONLY, skip excluded types
+      const protocolDocs = docs.filter(d => 
+        d.documentType === '104' && 
+        isEnglishDoc(d) && 
+        !shouldExcludeDocument(d.title)
+      );
 
       if (protocolDocs.length === 0) {
         skipped++;
@@ -1226,9 +1256,9 @@ async function bulkDownloadByTA(arg1 = null) {
           const trialData = await trialResp.json();
           const docs = trialData.documents || [];
 
-          // STRICT: Type 104 (Protocol), English ONLY. No other types touch the filesystem.
+          // STRICT: Type 104 (Protocol), English ONLY, skip excluded types. No other types touch the filesystem.
           const allProtocols   = docs.filter(d => d.documentType === '104');
-          const englishDocs    = allProtocols.filter(d => isEnglishDoc(d));
+          const englishDocs    = allProtocols.filter(d => isEnglishDoc(d) && !shouldExcludeDocument(d.title));
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;
 

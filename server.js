@@ -14,6 +14,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Base CTIS API URL
 const CTIS_API = 'https://euclinicaltrials.eu/ctis-public-api';
 
+// Excluded Document Types (by title pattern)
+// Documents matching these patterns will be rejected
+const EXCLUDED_DOC_PATTERNS = [
+  /patient.?facing/i,
+  /eDiary|e-diary/i,
+  /subject.?questionnaire/i,
+  /home.?supply.?position/i,
+  /home.?supply|supply.?position/i,
+  /patient.?facing.?material/i,
+  /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
+  /\bGR\b/i          // Greek language protocols (standalone GR)
+];
+
+function shouldExcludeDocument(docTitle) {
+  if (!docTitle) return false;
+  return EXCLUDED_DOC_PATTERNS.some(pattern => pattern.test(docTitle));
+}
+
 // Common headers for CTIS API requests
 const CTIS_HEADERS = {
   'Accept': 'application/json, text/plain, */*',
@@ -89,6 +107,11 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
     if (requestedDoc.documentType !== '104') {
       console.warn(`⛔ BLOCKED: Attempted download of non-protocol document [${ctNumber}/${uuid}]. Type: ${requestedDoc.documentType}`);
       return res.status(403).json({ error: 'Only Type 104 (Protocol) documents can be downloaded' });
+    }
+
+    if (shouldExcludeDocument(requestedDoc.title)) {
+      console.warn(`⛔ BLOCKED: Attempted download of excluded document [${ctNumber}/${uuid}]. Title: ${requestedDoc.title}`);
+      return res.status(403).json({ error: 'This document type is excluded from downloads' });
     }
 
     // Step 1 — Get the signed S3 URL from CTIS
