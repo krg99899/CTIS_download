@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Search and download clinical trial protocol PDFs from the EU Clinical Trials Register (CTIS) by therapeutic area">
+  <meta name="description" content="Search and download English-language clinical trial protocol PDFs from the EU Clinical Trials Register (CTIS) by therapeutic area and indication">
   <title>CTIS Protocol Downloader — EU Clinical Trials</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -37,7 +37,7 @@
         </div>
         <div>
           <h1>CTIS Protocol Downloader</h1>
-          <p class="subtitle">EU Clinical Trials Register • Protocol PDF Downloads</p>
+          <p class="subtitle">EU Clinical Trials Register • English Protocol PDFs Only</p>
         </div>
       </div>
       <div class="header-stats" id="headerStats">
@@ -115,6 +115,15 @@
           </div>
 
           <div class="filter-group">
+            <label for="indication">Indication
+              <span class="filter-hint">Select therapeutic area first</span>
+            </label>
+            <select id="indication" disabled>
+              <option value="">— Select therapeutic area first —</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
             <label for="trialPhase">Trial Phase</label>
             <select id="trialPhase">
               <option value="">All Phases</option>
@@ -174,7 +183,7 @@
             </svg>
             Bulk Download by Therapeutic Area
           </h2>
-          <p class="bulk-description">Download all English-language protocol PDFs for an entire therapeutic area. Only Protocol (type 104) and Synopsis (type 7) documents in English will be included.</p>
+          <p class="bulk-description">Downloads <strong>all</strong> English-language Protocol PDFs (type 104) for the selected therapeutic area — all pages, all trials. Interrupted downloads can be <strong>resumed</strong> from the Download Manager below.</p>
         </div>
         <span class="lang-badge">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.3"/><path d="M6.5 1C5 2.5 4 4.4 4 6.5s1 4 2.5 5.5M6.5 1c1.5 1.5 2.5 3.4 2.5 5.5s-1 4-2.5 5.5M1 6.5h11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
@@ -183,37 +192,48 @@
       </div>
 
       <div class="bulk-body">
-        <div class="bulk-select-group">
-          <label for="bulkTA">Therapeutic Area <span class="required-star">*</span></label>
-          <select id="bulkTA">
-            <option value="">— Select a therapeutic area to begin —</option>
-            <option value="C01">[C01] Bacterial Infections &amp; Mycoses</option>
-            <option value="C02">[C02] Virus Diseases</option>
-            <option value="C03">[C03] Parasitic Diseases</option>
-            <option value="C04">[C04] Neoplasms — Cancers &amp; Tumors</option>
-            <option value="C05">[C05] Musculoskeletal Diseases</option>
-            <option value="C06">[C06] Digestive System Diseases — Gastroenterology</option>
-            <option value="C07">[C07] Stomatognathic Diseases — Oral &amp; Dental</option>
-            <option value="C08">[C08] Respiratory Tract Diseases — Pulmonology</option>
-            <option value="C09">[C09] Otorhinolaryngologic Diseases — ENT</option>
-            <option value="C10">[C10] Nervous System Diseases — Neurology</option>
-            <option value="C11">[C11] Eye Diseases — Ophthalmology</option>
-            <option value="C12">[C12] Male Urogenital Diseases — Urology</option>
-            <option value="C13">[C13] Female Urogenital Diseases &amp; Pregnancy</option>
-            <option value="C14">[C14] Cardiovascular Diseases — Cardiology</option>
-            <option value="C15">[C15] Hemic &amp; Lymphatic Diseases — Haematology</option>
-            <option value="C16">[C16] Congenital, Hereditary &amp; Neonatal Diseases</option>
-            <option value="C17">[C17] Skin &amp; Connective Tissue Diseases — Dermatology</option>
-            <option value="C18">[C18] Nutritional &amp; Metabolic Diseases</option>
-            <option value="C19">[C19] Endocrine System Diseases — Endocrinology</option>
-            <option value="C20">[C20] Immune System Diseases — Immunology &amp; Allergy</option>
-            <option value="C21">[C21] Disorders of Environmental Origin</option>
-            <option value="C22">[C22] Animal Diseases — Veterinary</option>
-            <option value="C23">[C23] Pathological Conditions, Signs &amp; Symptoms</option>
-            <option value="C24">[C24] Occupational Diseases</option>
-            <option value="C25">[C25] Chemically-Induced Disorders — Toxicology</option>
-            <option value="C26">[C26] Wounds &amp; Injuries — Trauma</option>
-          </select>
+        <div class="bulk-selects-row">
+          <div class="bulk-select-group">
+            <label for="bulkTA">Therapeutic Area <span class="required-star">*</span></label>
+            <select id="bulkTA">
+              <option value="">— Select a therapeutic area to begin —</option>
+              <option value="C01">[C01] Bacterial Infections &amp; Mycoses</option>
+              <option value="C02">[C02] Virus Diseases</option>
+              <option value="C03">[C03] Parasitic Diseases</option>
+              <option value="C04">[C04] Neoplasms — Cancers &amp; Tumors</option>
+              <option value="C05">[C05] Musculoskeletal Diseases</option>
+              <option value="C06">[C06] Digestive System Diseases — Gastroenterology</option>
+              <option value="C07">[C07] Stomatognathic Diseases — Oral &amp; Dental</option>
+              <option value="C08">[C08] Respiratory Tract Diseases — Pulmonology</option>
+              <option value="C09">[C09] Otorhinolaryngologic Diseases — ENT</option>
+              <option value="C10">[C10] Nervous System Diseases — Neurology</option>
+              <option value="C11">[C11] Eye Diseases — Ophthalmology</option>
+              <option value="C12">[C12] Male Urogenital Diseases — Urology</option>
+              <option value="C13">[C13] Female Urogenital Diseases &amp; Pregnancy</option>
+              <option value="C14">[C14] Cardiovascular Diseases — Cardiology</option>
+              <option value="C15">[C15] Hemic &amp; Lymphatic Diseases — Haematology</option>
+              <option value="C16">[C16] Congenital, Hereditary &amp; Neonatal Diseases</option>
+              <option value="C17">[C17] Skin &amp; Connective Tissue Diseases — Dermatology</option>
+              <option value="C18">[C18] Nutritional &amp; Metabolic Diseases</option>
+              <option value="C19">[C19] Endocrine System Diseases — Endocrinology</option>
+              <option value="C20">[C20] Immune System Diseases — Immunology &amp; Allergy</option>
+              <option value="C21">[C21] Disorders of Environmental Origin</option>
+              <option value="C22">[C22] Animal Diseases — Veterinary</option>
+              <option value="C23">[C23] Pathological Conditions, Signs &amp; Symptoms</option>
+              <option value="C24">[C24] Occupational Diseases</option>
+              <option value="C25">[C25] Chemically-Induced Disorders — Toxicology</option>
+              <option value="C26">[C26] Wounds &amp; Injuries — Trauma</option>
+            </select>
+          </div>
+
+          <div class="bulk-select-group">
+            <label for="bulkIndication">Indication
+              <span class="filter-hint">Optional — narrows download scope</span>
+            </label>
+            <select id="bulkIndication" disabled>
+              <option value="">— Select therapeutic area first —</option>
+            </select>
+          </div>
         </div>
 
         <div class="bulk-options-row">
@@ -235,6 +255,30 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Start Bulk Download
         </button>
+      </div>
+    </section>
+
+    <!-- ═══ Download Manager Panel ═══ -->
+    <section class="dm-panel glass-card" id="dmPanel">
+      <div class="dm-panel-header">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <rect x="2" y="2" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M9 6v6m0 0l-2.5-2.5M9 12l2.5-2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Download Manager
+        </h2>
+        <p class="dm-subtitle">Interrupted downloads are saved here. Click <strong>Resume</strong> to continue from where you left off — no files will be re-downloaded.</p>
+      </div>
+      <div class="dm-session-list" id="dmSessionList">
+        <!-- Populated by JS -->
+      </div>
+      <div class="dm-empty" id="dmEmpty">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="opacity:0.3">
+          <rect x="5" y="5" width="30" height="30" rx="6" stroke="currentColor" stroke-width="2"/>
+          <path d="M20 13v14m0 0l-5-5m5 5l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>No active or saved download sessions</p>
       </div>
     </section>
 
@@ -277,7 +321,7 @@
           </svg>
         </div>
         <h3>Search EU Clinical Trials</h3>
-        <p>Enter a keyword or select a therapeutic area to find clinical trials with downloadable protocol documents.</p>
+        <p>Enter a keyword or select a therapeutic area to find clinical trials with downloadable English protocol documents.</p>
       </div>
 
       <!-- Loading State -->

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(railway --version)",
+      "Bash(git --version)",
+      "Bash(npm install:*)",
+      "Bash(where railway:*)",
+      "Bash(npx railway:*)",
+      "Bash(ls -la .railway*)"
+    ]
+  }
+}

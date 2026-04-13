@@ -2,7 +2,6 @@ const express = require('express');
 const fetch = require('node-fetch');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 const PORT = 3900;
@@ -15,7 +14,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Base CTIS API URL
 const CTIS_API = 'https://euclinicaltrials.eu/ctis-public-api';
 
-
 // Common headers for CTIS API requests
 const CTIS_HEADERS = {
   'Accept': 'application/json, text/plain, */*',
@@ -25,9 +23,12 @@ const CTIS_HEADERS = {
   'Referer': 'https://euclinicaltrials.eu/ctis-public/search?lang=en'
 };
 
-// ─── API Routes ───────────────────────────────
+// ─── Health Check (Railway) ──────────────────────────
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'ok', ts: Date.now() });
+});
 
-// Search clinical trials
+// ─── Search clinical trials ───────────────────────────
 app.post('/api/search', async (req, res) => {
   try {
     const response = await fetch(`${CTIS_API}/search`, {
@@ -43,7 +44,7 @@ app.post('/api/search', async (req, res) => {
   }
 });
 
-// Retrieve trial details (includes documents list)
+// ─── Retrieve trial details (includes documents list) ──
 app.get('/api/retrieve/:ctNumber', async (req, res) => {
   try {
     const { ctNumber } = req.params;
@@ -62,13 +63,14 @@ app.get('/api/retrieve/:ctNumber', async (req, res) => {
   }
 });
 
-// Download a document by UUID - handles JSON redirect to S3 and streams to browser
+// ─── Download document — English Protocol PDFs only ────
+// Resolves S3 URL then streams the PDF back to the browser.
 app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
   try {
     const { ctNumber, uuid } = req.params;
     const filename = req.query.filename || `${uuid}.pdf`;
 
-    // 1. Get the S3 Download URL from CTIS Public API
+    // Step 1 — Get the signed S3 URL from CTIS
     const redirectResponse = await fetch(`${CTIS_API}/documents/${ctNumber}/${uuid}/download`, {
       method: 'GET',
       headers: {
@@ -81,34 +83,36 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
     });
 
     if (!redirectResponse.ok) {
-        const errorText = await redirectResponse.text();
-        console.error(`CTIS Redirect Error [${ctNumber}/${uuid}]:`, redirectResponse.status, errorText);
-        return res.status(redirectResponse.status).json({ error: 'Failed to get document link from CTIS', details: errorText });
+      const errorText = await redirectResponse.text();
+      console.error(`CTIS Redirect Error [${ctNumber}/${uuid}]:`, redirectResponse.status, errorText);
+      return res.status(redirectResponse.status).json({ error: 'Failed to get document link from CTIS', details: errorText });
     }
 
     const redirectData = await redirectResponse.json();
     const s3Url = redirectData.url;
 
     if (!s3Url) {
-        return res.status(500).json({ error: 'CTIS returned No S3 URL' });
+      return res.status(500).json({ error: 'CTIS returned no S3 URL' });
     }
 
-    // 2. Fetch the actual PDF content from the S3 URL
+    // Step 2 — Stream the PDF from S3
     const fileResponse = await fetch(s3Url, { method: 'GET' });
 
     if (!fileResponse.ok) {
-        const errorText = await fileResponse.text();
-        console.error(`S3 Fetch Error [${uuid}]:`, fileResponse.status, errorText);
-        return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF from secure storage', details: errorText });
+      const errorText = await fileResponse.text();
+      console.error(`S3 Fetch Error [${uuid}]:`, fileResponse.status, errorText);
+      return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF from secure storage', details: errorText });
     }
 
-    console.log(`Successfully proxying PDF [${ctNumber}/${uuid}] - Size: ${fileResponse.headers.get('content-length')} bytes`);
+    console.log(`Proxying PDF [${ctNumber}/${uuid}] — ${fileResponse.headers.get('content-length')} bytes`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
-    // 3. Pipe the actual file stream back to the client browser
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'no-store');
+
+    // Pipe PDF stream to browser
     fileResponse.body.pipe(res);
   } catch (err) {
     console.error('Download error:', err.message);
@@ -116,12 +120,12 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
   }
 });
 
-// Serve frontend
+// ─── Serve frontend ───────────────────────────────────
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Using process.env.PORT for Railway cloud deployments
+// ─── Start ────────────────────────────────────────────
 const serverPort = process.env.PORT || PORT;
 
 app.listen(serverPort, '0.0.0.0', () => {
