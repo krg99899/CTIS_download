@@ -328,22 +328,56 @@ function bindEvents() {
 
   // Therapeutic area → populate indication dropdown
   els.therapeuticArea.addEventListener('change', () => {
-    populateIndicationDropdown(els.therapeuticArea.value, els.indication);
+    const val = els.therapeuticArea.value;
+    // Sync to bulk panel
+    if (els.bulkTA) {
+      els.bulkTA.value = val;
+      populateIndicationDropdown(val, els.bulkIndication);
+      onBulkTAChange();
+    }
+    populateIndicationDropdown(val, els.indication);
     state.currentPage = 1;
     performSearch();
   });
 
   if (els.indication) {
-    els.indication.addEventListener('change', () => { state.currentPage = 1; performSearch(); });
+    els.indication.addEventListener('change', () => {
+      // Sync to bulk panel
+      if (els.bulkIndication) {
+        els.bulkIndication.value = els.indication.value;
+        onBulkTAChange();
+      }
+      state.currentPage = 1;
+      performSearch();
+    });
   }
 
   // Bulk download panel
   els.bulkTA.addEventListener('change', () => {
-    populateIndicationDropdown(els.bulkTA.value, els.bulkIndication);
+    const val = els.bulkTA.value;
+    // Sync to primary filter
+    if (els.therapeuticArea) {
+      els.therapeuticArea.value = val;
+      populateIndicationDropdown(val, els.indication);
+    }
+    populateIndicationDropdown(val, els.bulkIndication);
     onBulkTAChange();
+    // Also trigger search update
+    state.currentPage = 1;
+    performSearch();
   });
+
   if (els.bulkIndication) {
-    els.bulkIndication.addEventListener('change', onBulkTAChange);
+    els.bulkIndication.addEventListener('change', () => {
+      // Sync to primary filter
+      if (els.indication) {
+        els.indication.value = els.bulkIndication.value;
+      }
+      onBulkTAChange();
+      // Also trigger search update
+      state.currentPage = 1;
+      performSearch();
+    });
   }
   els.btnBulkDownload.addEventListener('click', bulkDownloadByTA);
 
@@ -949,6 +983,10 @@ async function onBulkTAChange() {
   const taCode = els.bulkTA.value;
   if (!taCode) {
     els.btnBulkDownload.disabled = true;
+    els.btnBulkDownload.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Start Bulk Download
+    `;
     els.bulkTrialInfo.style.display = 'none';
     return;
   }
@@ -959,9 +997,15 @@ async function onBulkTAChange() {
   els.bulkTrialInfo.innerHTML = `
     <div class="bulk-info-loading">
       <span class="btn-spinner" style="border-color:rgba(99,102,241,0.3);border-top-color:var(--accent-primary-light)"></span>
-      Fetching trial count…
+      Analyzing therapeutic area scope…
     </div>`;
-  els.btnBulkDownload.disabled = true;
+  
+  // Enable button immediately for better visibility (unless we know it's empty)
+  els.btnBulkDownload.disabled = false;
+  els.btnBulkDownload.innerHTML = `
+    <span class="btn-spinner"></span>
+    Checking trials…
+  `;
 
   try {
     const body = buildBulkSearchBody(taCode, indication, 1, 1);
@@ -970,6 +1014,9 @@ async function onBulkTAChange() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+
+    if (!resp.ok) throw new Error('Count fetch failed');
+
     const data = await resp.json();
     const total = data.pagination?.totalRecords || 0;
     const taLabel = getTherapeuticAreaLabel(taCode);
@@ -977,12 +1024,21 @@ async function onBulkTAChange() {
 
     els.bulkTrialInfo.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span><strong>${total.toLocaleString()}</strong> trials in <strong>${escapeHtml(taLabel)}</strong>${indicationText}. Only English-language protocol documents will be downloaded.</span>`;
+      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria. Bulk download will proceed with English Protocols ONLY.</span>`;
 
     els.btnBulkDownload.disabled = total === 0;
-  } catch {
-    els.bulkTrialInfo.innerHTML = `<span style="color:var(--text-muted)">Could not fetch trial count — you may still attempt the download.</span>`;
+    els.btnBulkDownload.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Start Bulk Download (${total.toLocaleString()} trials)
+    `;
+  } catch (err) {
+    console.warn('Could not fetch trial count for bulk panel:', err);
+    els.bulkTrialInfo.innerHTML = `<span style="color:var(--text-muted)">Ready to download — unable to estimate count at this time.</span>`;
     els.btnBulkDownload.disabled = false;
+    els.btnBulkDownload.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Start Bulk Download
+    `;
   }
 }
 

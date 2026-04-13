@@ -78,50 +78,54 @@
         </div>
       </div>
 
-      <!-- Filters -->
+      <!-- Primary Filters (Always Visible) -->
+      <div class="primary-filters-row">
+        <div class="filter-group">
+          <label for="therapeuticArea">Therapeutic Area</label>
+          <select id="therapeuticArea">
+            <option value="">All Therapeutic Areas</option>
+            <option value="C01">[C01] Bacterial Infections &amp; Mycoses</option>
+            <option value="C02">[C02] Virus Diseases</option>
+            <option value="C03">[C03] Parasitic Diseases</option>
+            <option value="C04">[C04] Neoplasms — Cancers &amp; Tumors</option>
+            <option value="C05">[C05] Musculoskeletal Diseases</option>
+            <option value="C06">[C06] Digestive System Diseases — Gastroenterology</option>
+            <option value="C07">[C07] Stomatognathic Diseases — Oral &amp; Dental</option>
+            <option value="C08">[C08] Respiratory Tract Diseases — Pulmonology</option>
+            <option value="C09">[C09] Otorhinolaryngologic Diseases — ENT</option>
+            <option value="C10">[C10] Nervous System Diseases — Neurology</option>
+            <option value="C11">[C11] Eye Diseases — Ophthalmology</option>
+            <option value="C12">[C12] Male Urogenital Diseases — Urology</option>
+            <option value="C13">[C13] Female Urogenital Diseases &amp; Pregnancy</option>
+            <option value="C14">[C14] Cardiovascular Diseases — Cardiology</option>
+            <option value="C15">[C15] Hemic &amp; Lymphatic Diseases — Haematology</option>
+            <option value="C16">[C16] Congenital, Hereditary &amp; Neonatal Diseases</option>
+            <option value="C17">[C17] Skin &amp; Connective Tissue Diseases — Dermatology</option>
+            <option value="C18">[C18] Nutritional &amp; Metabolic Diseases</option>
+            <option value="C19">[C19] Endocrine System Diseases — Endocrinology</option>
+            <option value="C20">[C20] Immune System Diseases — Immunology &amp; Allergy</option>
+            <option value="C21">[C21] Disorders of Environmental Origin</option>
+            <option value="C22">[C22] Animal Diseases — Veterinary</option>
+            <option value="C23">[C23] Pathological Conditions, Signs &amp; Symptoms</option>
+            <option value="C24">[C24] Occupational Diseases</option>
+            <option value="C25">[C25] Chemically-Induced Disorders — Toxicology</option>
+            <option value="C26">[C26] Wounds &amp; Injuries — Trauma</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="indication">Indication
+            <span class="filter-hint">Select therapeutic area first</span>
+          </label>
+          <select id="indication" disabled>
+            <option value="">— Select therapeutic area first —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Extended Filters (Collapsible) -->
       <div class="filters-section" id="filtersSection">
         <div class="filter-grid">
-          <div class="filter-group">
-            <label for="therapeuticArea">Therapeutic Area</label>
-            <select id="therapeuticArea">
-              <option value="">All Therapeutic Areas</option>
-              <option value="C01">[C01] Bacterial Infections &amp; Mycoses</option>
-              <option value="C02">[C02] Virus Diseases</option>
-              <option value="C03">[C03] Parasitic Diseases</option>
-              <option value="C04">[C04] Neoplasms — Cancers &amp; Tumors</option>
-              <option value="C05">[C05] Musculoskeletal Diseases</option>
-              <option value="C06">[C06] Digestive System Diseases — Gastroenterology</option>
-              <option value="C07">[C07] Stomatognathic Diseases — Oral &amp; Dental</option>
-              <option value="C08">[C08] Respiratory Tract Diseases — Pulmonology</option>
-              <option value="C09">[C09] Otorhinolaryngologic Diseases — ENT</option>
-              <option value="C10">[C10] Nervous System Diseases — Neurology</option>
-              <option value="C11">[C11] Eye Diseases — Ophthalmology</option>
-              <option value="C12">[C12] Male Urogenital Diseases — Urology</option>
-              <option value="C13">[C13] Female Urogenital Diseases &amp; Pregnancy</option>
-              <option value="C14">[C14] Cardiovascular Diseases — Cardiology</option>
-              <option value="C15">[C15] Hemic &amp; Lymphatic Diseases — Haematology</option>
-              <option value="C16">[C16] Congenital, Hereditary &amp; Neonatal Diseases</option>
-              <option value="C17">[C17] Skin &amp; Connective Tissue Diseases — Dermatology</option>
-              <option value="C18">[C18] Nutritional &amp; Metabolic Diseases</option>
-              <option value="C19">[C19] Endocrine System Diseases — Endocrinology</option>
-              <option value="C20">[C20] Immune System Diseases — Immunology &amp; Allergy</option>
-              <option value="C21">[C21] Disorders of Environmental Origin</option>
-              <option value="C22">[C22] Animal Diseases — Veterinary</option>
-              <option value="C23">[C23] Pathological Conditions, Signs &amp; Symptoms</option>
-              <option value="C24">[C24] Occupational Diseases</option>
-              <option value="C25">[C25] Chemically-Induced Disorders — Toxicology</option>
-              <option value="C26">[C26] Wounds &amp; Injuries — Trauma</option>
-            </select>
-          </div>
-
-          <div class="filter-group">
-            <label for="indication">Indication
-              <span class="filter-hint">Select therapeutic area first</span>
-            </label>
-            <select id="indication" disabled>
-              <option value="">— Select therapeutic area first —</option>
-            </select>
-          </div>
 
           <div class="filter-group">
             <label for="trialPhase">Trial Phase</label>
