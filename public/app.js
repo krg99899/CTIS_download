@@ -1458,7 +1458,7 @@ function isEnglishDoc(doc) {
       if (t.includes(m)) return false;
     }
   }
-  return false; // If language cannot be determined, reject to avoid non-English docs
+  return true; // Accept docs without explicit language info (assume English if no non-EN markers found)
 }
 
 function sleep(ms) {
