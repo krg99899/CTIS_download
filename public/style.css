@@ -304,41 +304,44 @@ body {
 
 .primary-filters-row select {
   width: 100%;
-  height: 44px;
-  background: linear-gradient(135deg, rgba(50, 54, 100, 0.4), rgba(70, 80, 140, 0.3));
-  border: 1.5px solid var(--accent-primary-light);
+  max-width: 640px;
+  height: 46px;
+  padding: 0 36px 0 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1.5px solid rgba(52, 211, 153, 0.18);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-weight: 500;
-  padding: 0 12px;
   font-family: var(--font);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   cursor: pointer;
-  transition: all 0.25s var(--ease);
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
   -webkit-appearance: none;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%2334d399' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 36px;
+  background-position: right 14px center;
 }
 
 .primary-filters-row select:hover {
-  background: linear-gradient(135deg, rgba(60, 70, 120, 0.5), rgba(80, 90, 150, 0.4));
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 12px rgba(129, 140, 248, 0.2);
+  border-color: rgba(52, 211, 153, 0.35);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.08);
 }
 
 .primary-filters-row select:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-glow-strong);
+  border-color: rgba(52, 211, 153, 0.5);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.1);
   outline: none;
-  background: linear-gradient(135deg, rgba(60, 70, 120, 0.6), rgba(80, 90, 150, 0.5));
 }
 
 .primary-filters-row select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.primary-filters-row select option {
+  background: #0f1120;
+  color: var(--text-primary);
 }
 
 @media (max-width: 768px) {
@@ -407,6 +410,55 @@ body {
   box-shadow: 0 6px 20px var(--accent-glow-strong);
 }
 .btn-search:active { transform: translateY(0); }
+
+/* Source Tabs */
+.source-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  width: fit-content;
+  backdrop-filter: blur(20px);
+}
+
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.2rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s var(--ease);
+  font-family: var(--font);
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: var(--border-glass-hover);
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border-color: var(--accent-primary-light);
+  box-shadow: 0 4px 12px var(--accent-glow-strong);
+}
+
+.tab-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
 
 /* Filters */
 .filters-section {

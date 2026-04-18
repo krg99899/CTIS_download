@@ -106,7 +106,8 @@ const state = {
   downloadCount: 0,
   filtersOpen: false,
   directoryHandle: null,
-  bulkCancelled: false
+  bulkCancelled: false,
+  currentSource: 'ctis'  // 'ctis' or 'ctg'
 };
 
 // ── DOM Elements ───────────────────────────────────
@@ -332,14 +333,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadDownloadsInfo();
   await openDmDb();
   renderDownloadManager();
-  // Auto-run initial search to show total count
-  performSearch();
+  // Don't auto-run search on page load - let user start from top
+  // performSearch();
 });
 
 function bindEvents() {
   els.btnSearch.addEventListener('click', () => { state.currentPage = 1; performSearch(); });
   els.searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { state.currentPage = 1; performSearch(); }
+  });
+
+  // Source tab switching
+  document.querySelectorAll('.tab-btn').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      const sourceVal = e.currentTarget.dataset.source;
+      switchSource(sourceVal);
+    });
   });
 
   els.toggleFilters.addEventListener('click', toggleFilters);
@@ -465,6 +474,62 @@ function clearFilters() {
 async function performSearch() {
   showLoading(true);
 
+  if (state.currentSource === 'ctg') {
+    await performSearchCTG();
+  } else {
+    await performSearchCTIS();
+  }
+}
+
+// ── ClinicalTrials.gov Search ──────────────────────
+async function performSearchCTG() {
+  const keyword = els.searchInput.value.trim();
+  const phase = els.trialPhase.value || null;
+  const status = els.trialStatus.value || null;
+
+  // Map CTIS status codes to ClinicalTrials.gov status
+  const statusMap = {
+    '2': 'ACTIVE_NOT_RECRUITING',
+    '5': 'RECRUITING',
+    '7': 'COMPLETED',
+    '9': 'TERMINATED'
+  };
+
+  let ctgStatus = status ? statusMap[status] : '';
+
+  const body = {
+    query: keyword || 'Trials',
+    phase: phase,
+    status: ctgStatus,
+    pageSize: state.pageSize,
+    pageToken: null
+  };
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/ctg/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    state.results = data.studies || [];
+    state.totalRecords = data.totalCount || 0;
+    state.totalPages = Math.ceil(state.totalRecords / state.pageSize) || 0;
+
+    els.totalTrialsStat.textContent = state.totalRecords.toLocaleString();
+    renderResults();
+  } catch (err) {
+    console.error('ClinicalTrials.gov search failed:', err);
+    showToast('error', 'ClinicalTrials.gov Search Failed', err.message);
+    showLoading(false);
+  }
+}
+
+// ── CTIS Search (Original) ────────────────────────
+async function performSearchCTIS() {
   const keyword = els.searchInput.value.trim();
   const therapeuticArea = els.therapeuticArea.value || null;
   const indication = (els.indication && !els.indication.disabled) ? els.indication.value.trim() || null : null;
@@ -536,10 +601,33 @@ async function performSearch() {
     els.totalTrialsStat.textContent = state.totalRecords.toLocaleString();
     renderResults();
   } catch (err) {
-    console.error('Search failed:', err);
+    console.error('CTIS search failed:', err);
     showToast('error', 'Search Failed', err.message);
     showLoading(false);
   }
+}
+
+// ── Switch Source ──────────────────────────────────
+function switchSource(source) {
+  state.currentSource = source;
+  state.currentPage = 1;
+
+  // Update tab UI
+  document.querySelectorAll('.tab-btn').forEach(tab => {
+    if (tab.dataset.source === source) {
+      tab.classList.add('active');
+    } else {
+      tab.classList.remove('active');
+    }
+  });
+
+  // Reset results
+  state.results = [];
+  els.totalTrialsStat.textContent = '—';
+  renderResults();
+
+  // Run search with new source
+  performSearch();
 }
 
 // ── Render Results ─────────────────────────────────
@@ -568,66 +656,81 @@ function renderResults() {
 
   els.resultsGrid.querySelectorAll('.trial-card').forEach(card => {
     const ctNumber = card.dataset.ctNumber;
+    const source = card.dataset.source;
     card.addEventListener('click', (e) => {
       if (e.target.closest('.btn-mini')) return;
-      openTrialModal(ctNumber);
+      openTrialModal(ctNumber, source);
     });
   });
 
   els.resultsGrid.querySelectorAll('.btn-download-quick').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      quickDownloadProtocols(btn.dataset.ctNumber, btn.dataset.therapeuticArea || '', btn);
+      const source = btn.dataset.source || state.currentSource;
+      quickDownloadProtocols(btn.dataset.ctNumber, btn.dataset.therapeuticArea || '', btn, source);
     });
   });
 
   els.resultsGrid.querySelectorAll('.btn-view-detail').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openTrialModal(btn.dataset.ctNumber);
+      const card = btn.closest('.trial-card');
+      const source = card?.dataset.source || state.currentSource;
+      openTrialModal(btn.dataset.ctNumber, source);
     });
   });
 
-  els.resultsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Only scroll to results if user manually searched (not initial page load)
+  if (state.currentPage > 1 || els.searchInput.value.trim().length > 0 || els.therapeuticArea.value) {
+    els.resultsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function createTrialCard(trial) {
-  const statusClass = getStatusClass(trial.ctStatus);
-  const statusLabel = getStatusLabel(trial.ctStatus);
-  const ta = (trial.therapeuticAreas && trial.therapeuticAreas[0]) || '';
-  const taShort = ta.replace(/Diseases \[C\] - /g, '').replace(/ \[C\d+\]/g, '') || 'Not specified';
+  // Handle both CTIS and ClinicalTrials.gov formats
+  const isCTG = trial.sourceType === 'clinicaltrials.gov';
+  const id = isCTG ? trial.nct : trial.ctNumber;
+  const title = isCTG ? trial.title : trial.ctTitle || 'Untitled trial';
+  const sponsor = isCTG ? trial.sponsor : trial.sponsor || 'Unknown sponsor';
+  const phase = isCTG ? trial.phase : trial.trialPhase ? trial.trialPhase.split(' (')[0] : 'N/A';
+  const status = isCTG ? trial.recruitmentStatus : getStatusLabel(trial.ctStatus);
+  const statusClass = isCTG ? getStatusClassCTG(trial.recruitmentStatus) : getStatusClass(trial.ctStatus);
+  
+  const ta = isCTG ? trial.condition : (trial.therapeuticAreas && trial.therapeuticAreas[0]) || '';
+  const taShort = ta.replace(/Diseases \[C\] - /g, '').replace(/ \[C\d+\]/g, '').substring(0, 40) || 'Not specified';
 
   return `
-    <div class="trial-card" data-ct-number="${trial.ctNumber}">
+    <div class="trial-card" data-ct-number="${id}" data-source="${isCTG ? 'ctg' : 'ctis'}">
       <div class="trial-card-header">
-        <span class="ct-number">${trial.ctNumber}</span>
-        <span class="trial-status ${statusClass}">${statusLabel}</span>
+        <span class="ct-number">${id}</span>
+        <span class="trial-status ${statusClass}">${status}</span>
       </div>
-      <div class="trial-title">${escapeHtml(trial.ctTitle || 'Untitled trial')}</div>
+      <div class="trial-title">${escapeHtml(title)}</div>
       <div class="trial-meta">
         <span class="meta-tag">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M6 3.5v3l2 1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-          ${trial.trialPhase ? trial.trialPhase.split(' (')[0] : 'N/A'}
+          ${phase || 'N/A'}
         </span>
         <span class="meta-tag">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
           ${taShort}
         </span>
-        ${trial.trialCountries ? `<span class="meta-tag">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M1.5 6h9M6 1.5c-1.5 1.5-2 3-2 4.5s.5 3 2 4.5M6 1.5c1.5 1.5 2 3 2 4.5s-.5 3-2 4.5" stroke="currentColor" stroke-width="1"/></svg>
-          ${trial.trialCountries.length} ${trial.trialCountries.length === 1 ? 'country' : 'countries'}
+        ${isCTG && trial.enrollmentCount ? `<span class="meta-tag">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1"/><text x="6" y="7" text-anchor="middle" font-size="8" fill="currentColor">N</text></svg>
+          ${trial.enrollmentCount} enrolled
         </span>` : ''}
       </div>
       <div class="trial-footer">
-        <span class="trial-sponsor" title="${escapeHtml(trial.sponsor || '')}">${escapeHtml(trial.sponsor || 'Unknown sponsor')}</span>
+        <span class="trial-sponsor" title="${escapeHtml(sponsor)}">${escapeHtml(sponsor)}</span>
         <div class="trial-actions">
-          <button class="btn-mini btn-mini-ghost btn-view-detail" data-ct-number="${trial.ctNumber}" title="View trial details & documents">
+          <button class="btn-mini btn-mini-ghost btn-view-detail" data-ct-number="${id}" title="View trial details & documents">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M6 4v4M4 6h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
             Details
           </button>
           <button class="btn-mini btn-mini-green btn-download-quick"
-            data-ct-number="${trial.ctNumber}"
+            data-ct-number="${id}"
             data-therapeutic-area="${escapeHtml(taShort)}"
+            data-source="${isCTG ? 'ctg' : 'ctis'}"
             title="Download English protocol PDFs only">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v6m0 0L4 6m2 2l2-2M2 10h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Download
@@ -637,8 +740,18 @@ function createTrialCard(trial) {
     </div>`;
 }
 
+function getStatusClassCTG(status) {
+  const map = {
+    'RECRUITING': 'status-ongoing',
+    'ACTIVE_NOT_RECRUITING': 'status-authorized',
+    'COMPLETED': 'status-completed',
+    'TERMINATED': 'status-terminated'
+  };
+  return map[status] || 'status-default';
+}
+
 function getStatusClass(code) {
-  const map = { 2: 'status-authorised', 11: 'status-submitted', 5: 'status-ongoing', 7: 'status-completed', 9: 'status-terminated' };
+  const map = { 2: 'status-authorized', 11: 'status-submitted', 5: 'status-ongoing', 7: 'status-completed', 9: 'status-terminated' };
   return map[code] || 'status-default';
 }
 
@@ -648,26 +761,100 @@ function getStatusLabel(code) {
 }
 
 // ── Trial Detail Modal ─────────────────────────────
-async function openTrialModal(ctNumber) {
+async function openTrialModal(id, source) {
+  // Detect source from data attribute if not provided
+  if (!source) {
+    const card = document.querySelector(`[data-ct-number="${id}"]`);
+    source = card?.dataset.source || state.currentSource;
+  }
+
   els.modalOverlay.style.display = 'flex';
   els.modalContent.innerHTML = `
     <div style="text-align:center;padding:3rem">
       <div class="loader-ring"><div></div><div></div><div></div></div>
-      <p style="margin-top:1rem;color:var(--text-muted)">Loading trial ${ctNumber}…</p>
+      <p style="margin-top:1rem;color:var(--text-muted)">Loading trial ${id}…</p>
     </div>`;
 
   try {
-    const resp = await fetch(`${API_BASE}/api/retrieve/${ctNumber}`);
+    let resp, data;
+    
+    if (source === 'ctg') {
+      resp = await fetch(`${API_BASE}/api/ctg/retrieve/${id}`);
+    } else {
+      resp = await fetch(`${API_BASE}/api/retrieve/${id}`);
+    }
+    
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    renderModal(data, ctNumber);
+    data = await resp.json();
+    renderModal(data, id, source);
   } catch (err) {
     els.modalContent.innerHTML = `<p style="color:var(--red);text-align:center;padding:2rem">Failed to load trial: ${err.message}</p>`;
     showToast('error', 'Load Failed', err.message);
   }
 }
 
-function renderModal(data, ctNumber) {
+function renderModal(data, id, source) {
+  // Handle ClinicalTrials.gov format
+  if (source === 'ctg') {
+    const proto = data.protocolSection || {};
+    const ident = proto.identificationModule || {};
+    const design = proto.designModule || {};
+    const status = proto.statusModule || {};
+    const cond = proto.conditionsModule || {};
+    const sponsor = ident.organization?.fullName || ident.leadSponsor?.name || 'N/A';
+
+    els.modalContent.innerHTML = `
+      <div class="modal-ct-number">${id}</div>
+      <h2 class="modal-title">${escapeHtml(ident.officialTitle || ident.briefTitle || 'Untitled Trial')}</h2>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:1.2rem">
+        ${design.studyType ? `<span class="meta-tag">${design.studyType}</span>` : ''}
+        <span class="meta-tag">${status.overallStatus || 'N/A'}</span>
+        <span class="badge-en-only">🌐 ClinicalTrials.gov</span>
+      </div>
+
+      ${cond.conditions?.length ? `
+      <div class="modal-section">
+        <div class="modal-section-title">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Conditions
+        </div>
+        <div class="modal-section-body">${escapeHtml(cond.conditions.join(', '))}</div>
+      </div>` : ''}
+
+      <div class="modal-section">
+        <div class="modal-section-title">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="2" fill="currentColor"/></svg>
+          Trial Information
+        </div>
+        <div class="modal-section-body">
+          <div style="margin-bottom:0.8rem">
+            <strong>Sponsor:</strong> ${escapeHtml(sponsor)}
+          </div>
+          <div style="margin-bottom:0.8rem">
+            <strong>Recruitment Status:</strong> ${escapeHtml(status.recruitmentStatus || 'N/A')}
+          </div>
+          <div>
+            <strong>Enrollment:</strong> ${status.enrollmentInfo?.actualEnrollment || 0} participants
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:1.5rem;display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
+        <button class="btn-outline" id="btnViewCTG" data-nct="${id}">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4Z" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>
+          View on ClinicalTrials.gov
+        </button>
+      </div>
+    `;
+
+    els.modalContent.querySelector('#btnViewCTG').addEventListener('click', (e) => {
+      window.open(`https://clinicaltrials.gov/study/${e.currentTarget.dataset.nct}`, '_blank');
+    });
+    return;
+  }
+
+  // Original CTIS format handling
   const info = data.authorizedPartI || {};
   const docs = data.documents || [];
   // STRICT: Protocol only (type 104), English, and not excluded types
@@ -836,7 +1023,9 @@ async function saveDocLocal(uuid, filename, ctNumber, therapeuticArea, btnEl) {
 }
 
 // ── Quick Download (from card) — English Protocols Only ────
-async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
+async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
+  if (!source) source = state.currentSource;
+  
   if (!window.showDirectoryPicker) {
     showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a supported Chromium browser.');
     return;
@@ -850,44 +1039,57 @@ async function quickDownloadProtocols(ctNumber, therapeuticArea, btnEl) {
   btnEl.disabled = true;
 
   try {
-    const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${ctNumber}`);
-    const trialData = await trialResp.json();
-    const docs = trialData.documents || [];
+    let trialResp, trialData, docs;
+    
+    if (source === 'ctg') {
+      // ClinicalTrials.gov source
+      // Note: ClinicalTrials.gov API doesn't expose direct PDF links
+      // Redirect user to the trial page instead
+      const ctgUrl = `https://clinicaltrials.gov/study/${id}`;
+      showToast('info', 'View on ClinicalTrials.gov',
+        `Protocols for ClinicalTrials.gov studies must be downloaded directly from their website. Opening ${id}...`,
+        5000);
+      window.open(ctgUrl, '_blank');
+      btnEl.innerHTML = origHTML;
+      btnEl.disabled = false;
+      return;
+    }
+    
+    // CTIS source (original)
+    trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${id}`);
+    trialData = await trialResp.json();
+    docs = trialData.documents || [];
 
-    // Debug: Log all documents to identify filtering issues
-    console.log(`[${ctNumber}] All documents:`, docs.map(d => ({
-      uuid: d.uuid,
-      type: d.documentType,
-      lang: d.language,
-      title: d.title,
-      isType104: d.documentType === '104',
-      isEnglish: isEnglishDoc(d)
-    })));
-
-    // STRICT FILTER: English Protocol (type 104) ONLY — skip excluded types
-    const protocolDocs = docs.filter(d => 
+    // STRICT FILTER for CTIS: English Protocol (type 104) ONLY — skip excluded types
+    docs = docs.filter(d => 
       d.documentType === '104' && 
       isEnglishDoc(d) && 
       !shouldExcludeDocument(d.title, d.documentType)
     );
 
-    if (protocolDocs.length === 0) {
-      btnEl.innerHTML = 'No EN protocols';
+    if (docs.length === 0) {
+      btnEl.innerHTML = 'No protocols';
       btnEl.style.background = 'var(--amber-dim)';
       btnEl.style.color = 'var(--amber)';
       btnEl.style.border = 'none';
-      showToast('info', 'No Protocols', `No English protocol documents found for ${ctNumber}`);
+      showToast('info', 'No Protocols', `No protocol documents found for ${id}`);
       return;
     }
 
     let downloaded = 0;
     let failed = 0;
-    const trialDirHandle = await dirHandle.getDirectoryHandle(ctNumber, { create: true });
+    const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
 
-    for (const doc of protocolDocs) {
-      const filename = `${sanitizeFilename(doc.title)}.pdf`;
+    for (const doc of docs) {
+      const filename = source === 'ctg' ? (doc.filename || `${id}_protocol.pdf`) : `${sanitizeFilename(doc.title)}.pdf`;
       try {
-        const docResp = await fetchWithRetry(`${API_BASE}/api/document/${ctNumber}/${doc.uuid}`);
+        let docResp;
+        if (source === 'ctg') {
+          docResp = await fetchWithRetry(`${API_BASE}/api/ctg/document/${id}/${doc.filename || 'protocol.pdf'}`);
+        } else {
+          docResp = await fetchWithRetry(`${API_BASE}/api/document/${id}/${doc.uuid}`);
+        }
+        
         if (!docResp.ok) {
           console.error(`Document download returned ${docResp.status}:`, await docResp.text());
           failed++;
@@ -1486,7 +1688,7 @@ function showLoading(show) {
 }
 
 // ── Toasts ─────────────────────────────────────────
-function showToast(type, title, msg) {
+function showToast(type, title, msg, duration) {
   const icons = { success: '✓', error: '✕', info: 'ℹ' };
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
@@ -1497,10 +1699,11 @@ function showToast(type, title, msg) {
       ${msg ? `<div class="toast-msg">${escapeHtml(msg)}</div>` : ''}
     </div>`;
   els.toastContainer.appendChild(toast);
+  const delay = duration || 5000;
   setTimeout(() => {
     toast.classList.add('toast-out');
     setTimeout(() => toast.remove(), 300);
-  }, 5000);
+  }, delay);
 }
 
 // ── Utilities ──────────────────────────────────────
