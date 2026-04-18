@@ -161,6 +161,7 @@ const els = {
   bulkCTGPhase: $('#bulkCTGPhase'),
   bulkCTGExcludeSuspended: $('#bulkCTGExcludeSuspended'),
   bulkCTGExcludeTerminated: $('#bulkCTGExcludeTerminated'),
+  bulkCTGFallbackJson:      $('#bulkCTGFallbackJson'),
   btnBulkDownloadCTG: $('#btnBulkDownloadCTG'),
   bulkCTGTrialInfo: $('#bulkCTGTrialInfo'),
   // Download Manager
@@ -1101,6 +1102,13 @@ async function streamToFileInDirectory(dirHandle, filename, response) {
   await response.body.pipeTo(writable);
 }
 
+async function writeJsonToDirectory(dirHandle, filename, obj) {
+  const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(JSON.stringify(obj, null, 2));
+  await writable.close();
+}
+
 // ── Document Actions ───────────────────────────────
 function viewDoc(uuid, filename, ctNumber) {
   window.open(`${API_BASE}/api/document/${ctNumber}/${uuid}?filename=${encodeURIComponent(filename)}`, '_blank');
@@ -1158,37 +1166,43 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
     let trialResp, trialData, docs;
     
     if (source === 'ctg') {
-      // Fetch study details to get protocol document URLs
+      // Fetch study details — returns English-filtered PDFs + USDM trialJson fallback
       trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${id}`);
       trialData = await trialResp.json();
-      // English protocols only
-      docs = (trialData.documents || []).filter(d => isEnglishCtgDoc(d));
+      const allDocs = (trialData.documents || []).filter(d => d.url);
+      docs = allDocs.filter(d => isEnglishCtgDoc(d));
+      const fallbackJson = els.bulkCTGFallbackJson?.checked ?? true;
 
-      if (docs.length === 0) {
-        btnEl.innerHTML = 'No protocols';
-        btnEl.style.background = 'var(--amber-dim)';
-        btnEl.style.color = 'var(--amber)';
-        btnEl.style.border = 'none';
-        showToast('info', 'No Protocols', `No protocol documents found for ${id}`);
-        return;
-      }
-
+      const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
       let downloaded = 0;
       let failed = 0;
-      const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
+      let jsonSaved = false;
 
-      for (const doc of docs) {
-        const filename = `${id}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
+      if (docs.length > 0) {
+        // PDF available — download PDF(s), skip JSON
+        for (const doc of docs) {
+          const filename = `${id}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
+          try {
+            const docResp = await fetchWithRetry(
+              `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(doc.url)}&filename=${encodeURIComponent(filename)}`
+            );
+            if (!docResp.ok) { failed++; continue; }
+            await streamToFileInDirectory(trialDirHandle, filename, docResp);
+            downloaded++;
+          } catch (err) {
+            failed++;
+            console.error('Failed CTG document', doc.filename, err);
+          }
+        }
+      } else if (fallbackJson && trialData.trialJson) {
+        // No PDF — save USDM v4.0 JSON fallback to JSON/ subfolder
         try {
-          const docResp = await fetchWithRetry(
-            `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(doc.url)}&filename=${encodeURIComponent(filename)}`
-          );
-          if (!docResp.ok) { failed++; continue; }
-          await streamToFileInDirectory(trialDirHandle, filename, docResp);
-          downloaded++;
+          const jsonFolder = await trialDirHandle.getDirectoryHandle('JSON', { create: true });
+          await writeJsonToDirectory(jsonFolder, `${id}.json`, trialData.trialJson);
+          jsonSaved = true;
         } catch (err) {
           failed++;
-          console.error('Failed CTG document', doc.filename, err);
+          console.error('Failed CTG JSON fallback', id, err);
         }
       }
 
@@ -1202,10 +1216,18 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
         btnEl.style.border = 'none';
         showToast('success', id, `${downloaded} protocol${downloaded > 1 ? 's' : ''} saved`);
         if (failed > 0) showToast('error', 'Some Failed', `${failed} protocol(s) failed to download`);
+      } else if (jsonSaved) {
+        btnEl.innerHTML = '✓ USDM JSON';
+        btnEl.style.background = 'var(--accent-primary-dim)';
+        btnEl.style.color = 'var(--accent-primary-light)';
+        btnEl.style.border = 'none';
+        showToast('success', id, 'No PDF available — CDISC USDM v4.0 JSON saved to JSON/ subfolder');
       } else {
-        btnEl.innerHTML = origHTML;
-        btnEl.disabled = false;
-        showToast('error', 'Download Failed', 'All protocols failed to download');
+        btnEl.innerHTML = 'No protocols';
+        btnEl.style.background = 'var(--amber-dim)';
+        btnEl.style.color = 'var(--amber)';
+        btnEl.style.border = 'none';
+        showToast('info', 'No Protocols', `No protocol PDF or JSON available for ${id}`);
       }
       return;
     }
@@ -1294,14 +1316,16 @@ async function batchDownloadVisible() {
       <p class="batch-subtitle">Processing <span id="batchCurrent">0</span> of ${state.results.length} trials</p>
       <div class="batch-progress-bar"><div class="batch-progress-fill" id="batchFill" style="width:0%"></div></div>
       <div class="batch-stats">
-        <span>Downloaded: <span class="batch-stat-value" id="batchDl">0</span></span>
-        <span>Skipped/Empty: <span class="batch-stat-value" id="batchSkip">0</span></span>
+        <span>PDFs: <span class="batch-stat-value" id="batchDl">0</span></span>
+        <span>USDM JSON: <span class="batch-stat-value" id="batchJson">0</span></span>
+        <span>Skipped: <span class="batch-stat-value" id="batchSkip">0</span></span>
         <span>Failed: <span class="batch-stat-value" id="batchFail">0</span></span>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 
-  let downloaded = 0, skipped = 0, failed = 0;
+  let downloaded = 0, skipped = 0, failed = 0, jsonSaved = 0;
+  const fallbackJson = els.bulkCTGFallbackJson?.checked ?? true;
 
   for (let i = 0; i < state.results.length; i++) {
     const trial = state.results[i];
@@ -1313,18 +1337,14 @@ async function batchDownloadVisible() {
 
     try {
       if (isCTG) {
-        // ClinicalTrials.gov: fetch study details to get document URLs
+        // ClinicalTrials.gov: fetch study details — returns PDFs + USDM trialJson
         const trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${trialId}`);
         const trialData = await trialResp.json();
-        // English protocols only
-        const docs = (trialData.documents || []).filter(d => isEnglishCtgDoc(d));
+        const docs = (trialData.documents || []).filter(d => d.url && isEnglishCtgDoc(d));
+        const trialDirHandle = await dirHandle.getDirectoryHandle(trialId, { create: true });
 
-        if (docs.length === 0) {
-          skipped++;
-        } else {
-          const trialDirHandle = await dirHandle.getDirectoryHandle(trialId, { create: true });
+        if (docs.length > 0) {
           for (const doc of docs) {
-            if (!doc.url) { failed++; continue; }
             const filename = `${trialId}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
             try {
               const docResp = await fetchWithRetry(
@@ -1334,6 +1354,14 @@ async function batchDownloadVisible() {
               downloaded++;
             } catch { failed++; }
           }
+        } else if (fallbackJson && trialData.trialJson) {
+          try {
+            const jsonFolder = await trialDirHandle.getDirectoryHandle('JSON', { create: true });
+            await writeJsonToDirectory(jsonFolder, `${trialId}.json`, trialData.trialJson);
+            jsonSaved++;
+          } catch { failed++; }
+        } else {
+          skipped++;
         }
       } else {
         // CTIS: English Protocol type 104 only
@@ -1363,6 +1391,8 @@ async function batchDownloadVisible() {
     } catch { failed++; }
 
     overlay.querySelector('#batchDl').textContent = downloaded;
+    const batchJsonEl = overlay.querySelector('#batchJson');
+    if (batchJsonEl) batchJsonEl.textContent = jsonSaved;
     overlay.querySelector('#batchSkip').textContent = skipped;
     overlay.querySelector('#batchFail').textContent = failed;
     await sleep(200);
@@ -1371,7 +1401,7 @@ async function batchDownloadVisible() {
   state.downloadCount += downloaded;
   if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
 
-  showToast('success', 'Batch Complete', `${downloaded} documents downloaded, ${skipped} skipped, ${failed} failed`);
+  showToast('success', 'Batch Complete', `${downloaded} PDFs • ${jsonSaved} USDM JSON • ${skipped} skipped • ${failed} failed`);
 
   setTimeout(() => {
     overlay.style.opacity = '0';
@@ -1563,6 +1593,7 @@ async function bulkDownloadByCTG(arg1 = null) {
   const phase              = resumeSession ? resumeSession.phase              : (els.bulkCTGPhase?.value || '');
   const excludeSuspended   = resumeSession ? resumeSession.excludeSuspended   : (els.bulkCTGExcludeSuspended?.checked ?? true);
   const excludeTerminated  = resumeSession ? resumeSession.excludeTerminated  : (els.bulkCTGExcludeTerminated?.checked ?? true);
+  const fallbackJson       = resumeSession ? (resumeSession.fallbackJson ?? true) : (els.bulkCTGFallbackJson?.checked ?? true);
   const taCode             = resumeSession ? resumeSession.taCode             : (els.bulkCTGTA?.value || null);
   const indication         = resumeSession ? resumeSession.indication         : ((els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() || null : null);
 
@@ -1598,6 +1629,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       phase,
       excludeSuspended,
       excludeTerminated,
+      fallbackJson,
       taCode,
       indication,
       taLabel: displayLabel || condition,
@@ -1609,10 +1641,14 @@ async function bulkDownloadByCTG(arg1 = null) {
       failedCount: 0,
       skippedCount: 0,
       nonEnCount: 0,
+      jsonOnlyCount: 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
   }
+  // Ensure fallbackJson + jsonOnlyCount exist on resumed legacy sessions
+  if (session.fallbackJson === undefined) session.fallbackJson = fallbackJson;
+  if (session.jsonOnlyCount === undefined) session.jsonOnlyCount = 0;
   await dmSaveSession(session);
 
   // Build progress overlay
@@ -1644,6 +1680,10 @@ async function bulkDownloadByCTG(arg1 = null) {
           <span class="batch-stat-label">No Protocol</span>
         </div>
         <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpJsonOnly" style="color:var(--accent-primary-light)">${session.jsonOnlyCount || 0}</span>
+          <span class="batch-stat-label">USDM JSON</span>
+        </div>
+        <div class="batch-stat-item">
           <span class="batch-stat-value" id="bpNonEn" style="color:var(--text-muted)">${session.nonEnCount}</span>
           <span class="batch-stat-label">Non-English</span>
         </div>
@@ -1669,6 +1709,8 @@ async function bulkDownloadByCTG(arg1 = null) {
     overlay.querySelector('#bpProcessed').textContent  = session.processedCount;
     overlay.querySelector('#bpDownloaded').textContent = session.downloadedCount;
     overlay.querySelector('#bpSkipped').textContent    = session.skippedCount;
+    const jsonOnlyEl = overlay.querySelector('#bpJsonOnly');
+    if (jsonOnlyEl) jsonOnlyEl.textContent = session.jsonOnlyCount || 0;
     overlay.querySelector('#bpNonEn').textContent      = session.nonEnCount;
     overlay.querySelector('#bpFailed').textContent     = session.failedCount;
     if (session.totalTrials > 0) {
@@ -1719,29 +1761,25 @@ async function bulkDownloadByCTG(arg1 = null) {
         if (excludeSuspended  && st === 'SUSPENDED')  { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
         if (excludeTerminated && st === 'TERMINATED') { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
 
-        // Get documents from search payload; if empty (LargeDocModule not returned
-        // by search API), fall back to a per-study retrieve call.
-        let rawDocs = (study.documents || []).filter(d => d.url);
-        if (rawDocs.length === 0) {
-          try {
-            const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
-            const studyData = await studyResp.json();
-            rawDocs = (studyData.documents || []).filter(d => d.url);
-          } catch (e) {
-            console.error(`[${study.nct}] Fallback retrieve failed:`, e.message);
-          }
+        // Always call retrieve — the list API does not return documentSection
+        // reliably, and we also need trialJson for the USDM-fallback path.
+        let rawDocs = [];
+        let trialJson = null;
+        try {
+          const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
+          const studyData = await studyResp.json();
+          rawDocs = (studyData.documents || []).filter(d => d.url);
+          trialJson = studyData.trialJson || null;
+        } catch (e) {
+          console.error(`[${study.nct}] retrieve failed:`, e.message);
         }
 
         const englishDocs = rawDocs.filter(d => isEnglishCtgDoc(d));
         const nonEnCount  = rawDocs.length - englishDocs.length;
         session.nonEnCount += nonEnCount;
 
-        if (englishDocs.length === 0) {
-          session.skippedCount++;
-          if (nonEnCount > 0) {
-            console.log(`[${study.nct}] Skipped — ${nonEnCount} non-English protocol(s) excluded`);
-          }
-        } else {
+        if (englishDocs.length > 0) {
+          // PDF available → download PDF(s) only, skip JSON extraction
           for (const doc of englishDocs) {
             const alreadyDl = await dmIsDownloaded(session.id, study.nct, doc.filename);
             if (alreadyDl) continue;
@@ -1759,11 +1797,34 @@ async function bulkDownloadByCTG(arg1 = null) {
               await streamToFileInDirectory(taFolder, filename, docResp);
               await dmMarkDownloaded(session.id, study.nct, doc.filename);
               session.downloadedCount++;
-              console.log(`✓ CTG Downloaded: ${filename}`);
+              console.log(`✓ CTG PDF Downloaded: ${filename}`);
             } catch (err) {
               console.error(`Failed CTG doc [${study.nct}/${doc.filename}]:`, err.message);
               session.failedCount++;
             }
+          }
+        } else if (session.fallbackJson && trialJson) {
+          // No PDF available → save USDM v4.0 JSON fallback into JSON/ subfolder
+          const jsonKey = `${study.nct}__usdm.json`;
+          const alreadyDl = await dmIsDownloaded(session.id, study.nct, jsonKey);
+          if (!alreadyDl) {
+            try {
+              const jsonFolder = await taFolder.getDirectoryHandle('JSON', { create: true });
+              const jsonFilename = `${study.nct}.json`;
+              await writeJsonToDirectory(jsonFolder, jsonFilename, trialJson);
+              await dmMarkDownloaded(session.id, study.nct, jsonKey);
+              session.jsonOnlyCount++;
+              console.log(`✓ CTG USDM JSON saved: ${jsonFilename}`);
+            } catch (err) {
+              console.error(`Failed CTG JSON fallback [${study.nct}]:`, err.message);
+              session.failedCount++;
+            }
+          }
+        } else {
+          // No PDF, JSON fallback disabled or unavailable
+          session.skippedCount++;
+          if (nonEnCount > 0) {
+            console.log(`[${study.nct}] Skipped — ${nonEnCount} non-English protocol(s) excluded, JSON fallback off`);
           }
         }
 
@@ -1790,8 +1851,8 @@ async function bulkDownloadByCTG(arg1 = null) {
   if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
 
   const summaryMsg = state.bulkCancelled
-    ? `Cancelled — ${session.downloadedCount} protocols saved. Click Resume to continue.`
-    : `${session.downloadedCount} English protocols saved • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
+    ? `Cancelled — ${session.downloadedCount} PDFs + ${session.jsonOnlyCount || 0} JSON saved. Click Resume to continue.`
+    : `${session.downloadedCount} PDFs • ${session.jsonOnlyCount || 0} USDM JSON • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
 
   showToast(
     state.bulkCancelled ? 'info' : 'success',
@@ -2166,7 +2227,8 @@ async function renderDownloadManager() {
         </div>
         <div class="dm-stats-row">
           <span><strong>${s.processedCount.toLocaleString()}</strong> / ${s.totalTrials.toLocaleString()} ${isCTGSession ? 'studies' : 'trials'}</span>
-          <span style="color:var(--green)">⬇ ${s.downloadedCount.toLocaleString()} saved</span>
+          <span style="color:var(--green)">⬇ ${s.downloadedCount.toLocaleString()} PDFs</span>
+          ${isCTGSession ? `<span style="color:var(--accent-primary-light)">📄 ${(s.jsonOnlyCount || 0).toLocaleString()} USDM JSON</span>` : ''}
           <span style="color:var(--amber)">⊘ ${s.skippedCount.toLocaleString()} skipped</span>
           <span style="color:var(--text-muted)">🌐 ${(s.nonEnCount || 0).toLocaleString()} non-EN</span>
           <span style="color:var(--red)">✕ ${s.failedCount.toLocaleString()} failed</span>

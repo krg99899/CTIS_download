@@ -287,6 +287,337 @@ app.post('/api/ctg/search', async (req, res) => {
   }
 });
 
+// ─── CDISC USDM v4.0 helpers ──────────────────────────────────────────────
+// CDISC Controlled Terminology codes (C-codes) for USDM v4.0.
+// Source: CDISC CT Package + USDM CT Appendix.
+const USDM_CT = {
+  // Study Type
+  studyType: {
+    INTERVENTIONAL: { code: 'C98388', decode: 'Interventional Study', codeSystem: 'http://www.cdisc.org' },
+    OBSERVATIONAL: { code: 'C16084',  decode: 'Observational Study',  codeSystem: 'http://www.cdisc.org' },
+    EXPANDED_ACCESS:{ code: 'C48660', decode: 'Expanded Access Study', codeSystem: 'http://www.cdisc.org' }
+  },
+  // Study Phase
+  studyPhase: {
+    EARLY_PHASE1: { code: 'C54721', decode: 'Early Phase 1 Trial' },
+    PHASE1:       { code: 'C15600', decode: 'Phase 1 Trial' },
+    PHASE1_2:     { code: 'C15693', decode: 'Phase 1/Phase 2 Trial' },
+    PHASE2:       { code: 'C15601', decode: 'Phase 2 Trial' },
+    PHASE2_3:     { code: 'C15694', decode: 'Phase 2/Phase 3 Trial' },
+    PHASE3:       { code: 'C15602', decode: 'Phase 3 Trial' },
+    PHASE4:       { code: 'C15603', decode: 'Phase 4 Trial' },
+    NA:           { code: 'C48660', decode: 'Not Applicable' }
+  },
+  // Objective Level
+  objectiveLevel: {
+    PRIMARY:     { code: 'C85826', decode: 'Primary Objective',     codeSystem: 'http://www.cdisc.org' },
+    SECONDARY:   { code: 'C85827', decode: 'Secondary Objective',   codeSystem: 'http://www.cdisc.org' },
+    EXPLORATORY: { code: 'C85828', decode: 'Tertiary Objective',    codeSystem: 'http://www.cdisc.org' }
+  },
+  // Endpoint Level
+  endpointLevel: {
+    PRIMARY:     { code: 'C94496',  decode: 'Primary Endpoint',     codeSystem: 'http://www.cdisc.org' },
+    SECONDARY:   { code: 'C94497',  decode: 'Secondary Endpoint',   codeSystem: 'http://www.cdisc.org' },
+    EXPLORATORY: { code: 'C188769', decode: 'Exploratory Endpoint', codeSystem: 'http://www.cdisc.org' }
+  },
+  // Intervention Model
+  interventionModel: {
+    SINGLE_GROUP:  { code: 'C82639', decode: 'Single Group Study' },
+    PARALLEL:      { code: 'C82640', decode: 'Parallel Study' },
+    CROSSOVER:     { code: 'C82638', decode: 'Crossover Study' },
+    FACTORIAL:     { code: 'C15710', decode: 'Factorial Study Design' },
+    SEQUENTIAL:    { code: 'C82637', decode: 'Sequential Study' }
+  },
+  // Sex
+  sex: {
+    ALL:    { code: 'C49636', decode: 'Both' },
+    FEMALE: { code: 'C16576', decode: 'Female' },
+    MALE:   { code: 'C20197', decode: 'Male' }
+  },
+  // Masking (Blinding)
+  blinding: {
+    NONE:        { code: 'C15228', decode: 'Open Label' },
+    SINGLE:      { code: 'C15229', decode: 'Single Blind Study' },
+    DOUBLE:      { code: 'C15230', decode: 'Double Blind Study' },
+    TRIPLE:      { code: 'C28233', decode: 'Triple Blind Study' },
+    QUADRUPLE:   { code: 'C28234', decode: 'Quadruple Blind Study' }
+  }
+};
+
+function usdmPhaseCode(phases) {
+  if (!phases || phases.length === 0) return USDM_CT.studyPhase.NA;
+  const p = phases[0];
+  return USDM_CT.studyPhase[p] || USDM_CT.studyPhase.NA;
+}
+
+// Poor-man's UUID — avoids pulling in the `uuid` dep for a single use.
+function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+// Build a CDISC USDM v4.0-aligned JSON representation from a CTG v2 study payload.
+// Used as a fallback when a protocol PDF is not available for a study.
+// NOTE: SoA (Schedule of Activities), Estimands (ICH E9 R1), and BiomedicalConcepts
+// are NOT populated — these entities live only in the protocol PDF and cannot be
+// reconstructed from CT.gov structured fields.
+function buildTrialJson(data) {
+  const p = data.protocolSection || {};
+  const id = p.identificationModule || {};
+  const status = p.statusModule || {};
+  const sponsor = p.sponsorCollaboratorsModule || {};
+  const descr = p.descriptionModule || {};
+  const conditionsM = p.conditionsModule || {};
+  const design = p.designModule || {};
+  const arms = p.armsInterventionsModule || {};
+  const outcomes = p.outcomesModule || {};
+  const eligibility = p.eligibilityModule || {};
+  const contacts = p.contactsLocationsModule || {};
+
+  const docSection = data.documentSection || {};
+  const largeDocs = (docSection.largeDocumentModule?.largeDocs || []).map(d => ({
+    id: uuid(),
+    instanceType: 'DocumentVersion',
+    type: d.typeAbbrev || '',
+    label: d.label || '',
+    filename: d.filename || '',
+    url: d.url || '',
+    date: d.date || '',
+    size: d.size || 0
+  }));
+
+  // Build Objective→Endpoint hierarchy per USDM v4.0 (Endpoint is child of Objective)
+  const buildObjective = (outcome, level) => {
+    const objectiveId = uuid();
+    return {
+      id: objectiveId,
+      instanceType: 'Objective',
+      name: outcome.measure || '',
+      description: outcome.description || outcome.measure || '',
+      level: USDM_CT.objectiveLevel[level],
+      endpoints: [{
+        id: uuid(),
+        instanceType: 'Endpoint',
+        name: outcome.measure || '',
+        description: outcome.description || '',
+        purpose: outcome.timeFrame ? `Assessed at: ${outcome.timeFrame}` : '',
+        level: USDM_CT.endpointLevel[level]
+      }]
+    };
+  };
+
+  const objectives = [
+    ...(outcomes.primaryOutcomes   || []).map(o => buildObjective(o, 'PRIMARY')),
+    ...(outcomes.secondaryOutcomes || []).map(o => buildObjective(o, 'SECONDARY')),
+    ...(outcomes.otherOutcomes     || []).map(o => buildObjective(o, 'EXPLORATORY'))
+  ];
+
+  const studyIdentifiers = [
+    {
+      id: uuid(),
+      instanceType: 'StudyIdentifier',
+      studyIdentifier: data.nctId || id.nctId || '',
+      studyIdentifierScope: {
+        id: uuid(),
+        instanceType: 'Organization',
+        name: 'ClinicalTrials.gov',
+        organizationType: { code: 'C93453', decode: 'Registry' }
+      }
+    }
+  ];
+  if (id.orgStudyIdInfo?.id) {
+    studyIdentifiers.push({
+      id: uuid(),
+      instanceType: 'StudyIdentifier',
+      studyIdentifier: id.orgStudyIdInfo.id,
+      studyIdentifierScope: {
+        id: uuid(),
+        instanceType: 'Organization',
+        name: id.organization?.fullName || 'Sponsor',
+        organizationType: { code: 'C70793', decode: 'Sponsor' }
+      }
+    });
+  }
+  (id.secondaryIdInfos || []).forEach(sec => {
+    studyIdentifiers.push({
+      id: uuid(),
+      instanceType: 'StudyIdentifier',
+      studyIdentifier: sec.id || '',
+      studyIdentifierScope: {
+        id: uuid(),
+        instanceType: 'Organization',
+        name: sec.domain || sec.type || 'Secondary ID',
+        organizationType: { code: 'C70793', decode: 'Sponsor' }
+      }
+    });
+  });
+
+  const conditions = (conditionsM.conditions || []).map(c => ({
+    id: uuid(),
+    instanceType: 'Condition',
+    name: c,
+    description: c
+  }));
+
+  const interventions = (arms.interventions || []).map(iv => ({
+    id: uuid(),
+    instanceType: 'StudyIntervention',
+    name: iv.name || '',
+    description: iv.description || '',
+    role: { code: iv.type || '', decode: iv.type || '' },
+    armGroupLabels: iv.armGroupLabels || [],
+    otherNames: iv.otherNames || []
+  }));
+
+  const armGroups = (arms.armGroups || []).map(ag => ({
+    id: uuid(),
+    instanceType: 'StudyArm',
+    name: ag.label || '',
+    description: ag.description || '',
+    type: { code: ag.type || '', decode: ag.type || '' },
+    interventionNames: ag.interventionNames || []
+  }));
+
+  const interventionModel = USDM_CT.interventionModel[design.designInfo?.interventionModel] || null;
+  const blindingModel = (() => {
+    const masking = (design.designInfo?.maskingInfo?.masking || '').toUpperCase();
+    if (masking.includes('QUADRUPLE')) return USDM_CT.blinding.QUADRUPLE;
+    if (masking.includes('TRIPLE'))    return USDM_CT.blinding.TRIPLE;
+    if (masking.includes('DOUBLE'))    return USDM_CT.blinding.DOUBLE;
+    if (masking.includes('SINGLE'))    return USDM_CT.blinding.SINGLE;
+    if (masking.includes('NONE') || masking.includes('OPEN')) return USDM_CT.blinding.NONE;
+    return null;
+  })();
+
+  const studyDesignId = uuid();
+  const studyDesign = {
+    id: studyDesignId,
+    instanceType: 'StudyDesign',
+    name: `${id.briefTitle || 'Study'} — Design`,
+    label: id.briefTitle || '',
+    description: descr.briefSummary || '',
+    studyType: USDM_CT.studyType[design.studyType] || null,
+    studyPhase: usdmPhaseCode(design.phases),
+    therapeuticAreas: [],
+    rationale: '',
+    interventionModel,
+    blindingSchema: blindingModel,
+    conditions,
+    indications: [],
+    studyInterventions: interventions,
+    arms: armGroups,
+    objectives,
+    estimands: [],
+    populations: [{
+      id: uuid(),
+      instanceType: 'StudyDesignPopulation',
+      name: 'Trial Population',
+      description: eligibility.studyPopulation || '',
+      includeCriteria: [],
+      excludeCriteria: [],
+      plannedEnrollmentNumber: design.enrollmentInfo?.count || null,
+      sex: USDM_CT.sex[eligibility.sex] || null,
+      minimumAge: eligibility.minimumAge || '',
+      maximumAge: eligibility.maximumAge || '',
+      healthySubjectIndicator: eligibility.healthyVolunteers || false,
+      plannedAges: eligibility.stdAges || [],
+      criteria: eligibility.eligibilityCriteria || ''
+    }],
+    scheduleTimelines: [],
+    biomedicalConcepts: []
+  };
+
+  const studyVersionId = uuid();
+  const studyVersion = {
+    id: studyVersionId,
+    instanceType: 'StudyVersion',
+    versionIdentifier: '1.0',
+    rationale: 'Auto-generated from ClinicalTrials.gov — no protocol PDF available.',
+    studyType: USDM_CT.studyType[design.studyType] || null,
+    studyPhase: usdmPhaseCode(design.phases),
+    dateValues: [
+      { instanceType: 'GovernanceDate', name: 'StartDate',             dateValue: status.startDateStruct?.date || '' },
+      { instanceType: 'GovernanceDate', name: 'PrimaryCompletionDate', dateValue: status.primaryCompletionDateStruct?.date || '' },
+      { instanceType: 'GovernanceDate', name: 'CompletionDate',        dateValue: status.completionDateStruct?.date || '' },
+      { instanceType: 'GovernanceDate', name: 'LastUpdateSubmitDate',  dateValue: status.lastUpdateSubmitDate || '' }
+    ],
+    titles: [
+      { instanceType: 'StudyTitle', type: { code: 'C207607', decode: 'Official Study Title' }, text: id.officialTitle || '' },
+      { instanceType: 'StudyTitle', type: { code: 'C207606', decode: 'Brief Study Title' },    text: id.briefTitle || '' }
+    ],
+    studyIdentifiers,
+    businessTherapeuticAreas: [],
+    studyDesigns: [studyDesign],
+    documentVersionIds: largeDocs.map(d => d.id),
+    organizations: [
+      sponsor.leadSponsor ? {
+        id: uuid(),
+        instanceType: 'Organization',
+        name: sponsor.leadSponsor.name || '',
+        organizationType: { code: 'C70793', decode: 'Sponsor' }
+      } : null,
+      ...(sponsor.collaborators || []).map(c => ({
+        id: uuid(),
+        instanceType: 'Organization',
+        name: c.name || '',
+        organizationType: { code: 'C188574', decode: 'Collaborator' }
+      }))
+    ].filter(Boolean),
+    amendments: [],
+    narrativeContents: descr.detailedDescription ? [{
+      id: uuid(),
+      instanceType: 'NarrativeContent',
+      name: 'DetailedDescription',
+      sectionTitle: 'Detailed Description',
+      text: descr.detailedDescription
+    }] : []
+  };
+
+  const study = {
+    id: uuid(),
+    instanceType: 'Study',
+    name: id.briefTitle || id.officialTitle || '',
+    label: id.briefTitle || '',
+    description: descr.briefSummary || '',
+    versions: [studyVersion],
+    documentedBy: largeDocs.length > 0 ? {
+      id: uuid(),
+      instanceType: 'StudyDefinitionDocument',
+      name: 'Study Protocol',
+      description: 'Protocol document(s) registered with ClinicalTrials.gov',
+      language: { code: 'en', decode: 'English' },
+      type: { code: 'C70817', decode: 'Protocol' },
+      templateName: 'CTGOV',
+      versions: largeDocs
+    } : null
+  };
+
+  return {
+    usdmVersion: '4.0',
+    systemName: 'CTIS-Downloader-CTGOV-Extractor',
+    systemVersion: '1.0',
+    sourceSystem: 'ClinicalTrials.gov API v2',
+    extractedAt: new Date().toISOString(),
+    note: 'Generated from ClinicalTrials.gov when no protocol PDF was available. Schedule of Activities (SoA), Estimands (ICH E9 R1), BiomedicalConcepts, and narrative protocol sections are NOT populated — these live only in the uploaded protocol PDF.',
+    study,
+    ctgSourceData: {
+      centralContacts: contacts.centralContacts || [],
+      overallOfficials: contacts.overallOfficials || [],
+      locations: (contacts.locations || []).map(l => ({
+        facility: l.facility || '',
+        city: l.city || '',
+        state: l.state || '',
+        country: l.country || '',
+        zip: l.zip || '',
+        status: l.status || ''
+      }))
+    }
+  };
+}
+
 // Get ClinicalTrials.gov study details
 app.get('/api/ctg/retrieve/:nct', async (req, res) => {
   try {
@@ -327,7 +658,8 @@ app.get('/api/ctg/retrieve/:nct', async (req, res) => {
       nct: data.nctId,
       title: protocolSection.identificationModule?.officialTitle || protocolSection.identificationModule?.briefTitle || '',
       documents: documents,
-      protocolSection: protocolSection
+      protocolSection: protocolSection,
+      trialJson: buildTrialJson(data)
     });
 
   } catch (err) {

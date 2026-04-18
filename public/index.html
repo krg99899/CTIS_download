@@ -355,6 +355,10 @@
             <input type="checkbox" id="bulkCTGExcludeTerminated" checked>
             <span>Exclude Terminated Studies</span>
           </label>
+          <label class="toggle-chip" title="When no protocol PDF is available, save a CDISC USDM v4.0-aligned JSON fallback into a JSON/ subfolder. Note: SoA is not included — it lives only in the protocol PDF.">
+            <input type="checkbox" id="bulkCTGFallbackJson" checked>
+            <span>Fallback to USDM JSON if PDF missing</span>
+          </label>
         </div>
 
         <div class="bulk-trial-info" id="bulkCTGTrialInfo" style="display:none">
