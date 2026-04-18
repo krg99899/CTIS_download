@@ -2365,9 +2365,11 @@ function isEnglishDoc(doc) {
   return true; // Accept if no non-EN markers found
 }
 
-// ── isEnglishCtgDoc — English-only check for CTG protocol documents ──
+// ── isEnglishCtgDoc — English-only + content exclusion check for CTG docs ──
 // CTG docs have no language field; we inspect label + filename for
 // non-English markers using the same pattern set as isEnglishDoc (CTIS).
+// Also excludes documents with 'clarification' or 'ELL' tokens in the
+// title/filename (request clarifications, standalone ELL packages).
 function isEnglishCtgDoc(doc) {
   const text = [(doc.label || ''), (doc.filename || '')].join(' ').toUpperCase();
 
@@ -2388,8 +2390,15 @@ function isEnglishCtgDoc(doc) {
     'PROTOCOLLO', 'PROTOKOL', 'PRÜFPLAN', 'PRUEFPLAN',
     'STUDIEPROTOCOL', 'KLINIK PROTOKOL'
   ];
+  if (nonEnMarkers.some(m => text.includes(m))) return false;
 
-  return !nonEnMarkers.some(m => text.includes(m));
+  // Content-type exclusions — skip clarification docs and ELL packages.
+  // 'CLARIFICATION' is safe as substring. 'ELL' must be word-bounded to
+  // avoid false positives like SELL, CELLULAR, BELL, WELL, etc.
+  if (text.includes('CLARIFICATION')) return false;
+  if (/(^|[\s._\-()\[\]/\\])ELL($|[\s._\-()\[\]/\\])/.test(text)) return false;
+
+  return true;
 }
 
 function sleep(ms) {
