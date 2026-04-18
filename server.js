@@ -196,6 +196,16 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
 
 // Base ClinicalTrials.gov API URL
 const CTG_API = 'https://clinicaltrials.gov/api/v2';
+const CTG_CDN = 'https://cdn.clinicaltrials.gov/large-docs';
+
+// Build CT.gov large-document download URL. The v2 API does NOT return `url`
+// on largeDocs entries, but the CDN follows a stable pattern:
+//   https://cdn.clinicaltrials.gov/large-docs/{last2digitsOfNCT}/{NCT}/{filename}
+function buildCtgDocUrl(nct, filename) {
+  if (!nct || !filename) return '';
+  const lastTwo = String(nct).slice(-2);
+  return `${CTG_CDN}/${lastTwo}/${nct}/${filename}`;
+}
 
 // ClinicalTrials.gov Document Type Mappings
 const CTG_PROTOCOL_FIELDS = ['protocolSection', 'documentSection'];
@@ -378,13 +388,14 @@ function buildTrialJson(data) {
   const contacts = p.contactsLocationsModule || {};
 
   const docSection = data.documentSection || {};
+  const nctForDocs = data.nctId || id.nctId || '';
   const largeDocs = (docSection.largeDocumentModule?.largeDocs || []).map(d => ({
     id: uuid(),
     instanceType: 'DocumentVersion',
     type: d.typeAbbrev || '',
     label: d.label || '',
     filename: d.filename || '',
-    url: d.url || '',
+    url: d.url || buildCtgDocUrl(nctForDocs, d.filename),
     date: d.date || '',
     size: d.size || 0
   }));
@@ -649,7 +660,7 @@ app.get('/api/ctg/retrieve/:nct', async (req, res) => {
       .map(doc => ({
         title: doc.label || doc.filename || 'Protocol Document',
         filename: doc.filename || `${nct}_protocol.pdf`,
-        url: doc.url || '',
+        url: doc.url || buildCtgDocUrl(data.nctId || nct, doc.filename),
         typeAbbrev: doc.typeAbbrev,
         label: doc.label || 'Study Protocol',
         size: doc.size || 0,
@@ -705,7 +716,7 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
 
     // Find by filename match, or fall back to first document
     const doc = documents.find(d => d.filename === filename) || documents[0];
-    const docUrl = doc.url;
+    const docUrl = doc.url || buildCtgDocUrl(data.nctId || nct, doc.filename);
 
     if (!docUrl) {
       return res.status(404).json({ error: 'Document URL not available' });
