@@ -287,18 +287,9 @@
             <input type="text" id="bulkCTGCondition" class="bulk-text-input" placeholder="e.g. cancer, diabetes, heart failure, COVID-19…" autocomplete="off">
           </div>
           <div class="bulk-select-group">
-            <label for="bulkCTGStatus">Overall Status</label>
-            <select id="bulkCTGStatus">
-              <option value="">All Statuses</option>
-              <option value="RECRUITING">Recruiting</option>
-              <option value="ACTIVE_NOT_RECRUITING">Active, Not Recruiting</option>
-              <option value="COMPLETED">Completed</option>
-              <option value="TERMINATED">Terminated</option>
-              <option value="SUSPENDED">Suspended</option>
-            </select>
-          </div>
-          <div class="bulk-select-group">
-            <label for="bulkCTGPhase">Phase</label>
+            <label for="bulkCTGPhase">Phase
+              <span class="filter-hint">Optional — narrows download scope</span>
+            </label>
             <select id="bulkCTGPhase">
               <option value="">All Phases</option>
               <option value="1">Phase 1</option>
@@ -307,6 +298,17 @@
               <option value="4">Phase 4</option>
             </select>
           </div>
+        </div>
+
+        <div class="bulk-options-row">
+          <label class="toggle-chip" title="Skip studies with SUSPENDED overall status">
+            <input type="checkbox" id="bulkCTGExcludeSuspended" checked>
+            <span>Exclude Suspended Studies</span>
+          </label>
+          <label class="toggle-chip" title="Skip studies with TERMINATED overall status">
+            <input type="checkbox" id="bulkCTGExcludeTerminated" checked>
+            <span>Exclude Terminated Studies</span>
+          </label>
         </div>
 
         <div class="bulk-trial-info" id="bulkCTGTrialInfo" style="display:none">

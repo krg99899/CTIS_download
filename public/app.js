@@ -156,8 +156,9 @@ const els = {
   // Bulk download panel — ClinicalTrials.gov
   bulkCTGSection: $('#bulkCTGSection'),
   bulkCTGCondition: $('#bulkCTGCondition'),
-  bulkCTGStatus: $('#bulkCTGStatus'),
   bulkCTGPhase: $('#bulkCTGPhase'),
+  bulkCTGExcludeSuspended: $('#bulkCTGExcludeSuspended'),
+  bulkCTGExcludeTerminated: $('#bulkCTGExcludeTerminated'),
   btnBulkDownloadCTG: $('#btnBulkDownloadCTG'),
   bulkCTGTrialInfo: $('#bulkCTGTrialInfo'),
   // Download Manager
@@ -433,8 +434,9 @@ function bindEvents() {
       if (e.key === 'Enter') onBulkCTGChange();
     });
   }
-  if (els.bulkCTGStatus)  els.bulkCTGStatus.addEventListener('change', onBulkCTGChange);
-  if (els.bulkCTGPhase)   els.bulkCTGPhase.addEventListener('change', onBulkCTGChange);
+  if (els.bulkCTGPhase)              els.bulkCTGPhase.addEventListener('change', onBulkCTGChange);
+  if (els.bulkCTGExcludeSuspended)   els.bulkCTGExcludeSuspended.addEventListener('change', onBulkCTGChange);
+  if (els.bulkCTGExcludeTerminated)  els.bulkCTGExcludeTerminated.addEventListener('change', onBulkCTGChange);
   if (els.btnBulkDownloadCTG) els.btnBulkDownloadCTG.addEventListener('click', bulkDownloadByCTG);
 
   // Auto-search on filter change
@@ -1484,13 +1486,12 @@ async function onBulkCTGChange() {
   }
 
   try {
-    const overallStatus = els.bulkCTGStatus?.value || '';
     const phase = els.bulkCTGPhase?.value || '';
 
     const resp = await fetch(`${API_BASE}/api/ctg/bulk-search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ condition, overallStatus, phase, pageSize: 1 })
+      body: JSON.stringify({ condition, phase, pageSize: 1 })
     });
     if (!resp.ok) throw new Error('Count fetch failed');
 
@@ -1529,8 +1530,9 @@ async function bulkDownloadByCTG(arg1 = null) {
   const condition = resumeSession ? resumeSession.condition : els.bulkCTGCondition?.value.trim();
   if (!condition) return;
 
-  const overallStatus = resumeSession ? resumeSession.overallStatus : (els.bulkCTGStatus?.value || '');
-  const phase         = resumeSession ? resumeSession.phase         : (els.bulkCTGPhase?.value || '');
+  const phase              = resumeSession ? resumeSession.phase              : (els.bulkCTGPhase?.value || '');
+  const excludeSuspended   = resumeSession ? resumeSession.excludeSuspended   : (els.bulkCTGExcludeSuspended?.checked ?? true);
+  const excludeTerminated  = resumeSession ? resumeSession.excludeTerminated  : (els.bulkCTGExcludeTerminated?.checked ?? true);
 
   if (!window.showDirectoryPicker) {
     showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a Chromium-based browser.');
@@ -1557,11 +1559,12 @@ async function bulkDownloadByCTG(arg1 = null) {
       id: generateSessionId(),
       sessionSource: 'ctg',
       condition,
-      overallStatus,
       phase,
+      excludeSuspended,
+      excludeTerminated,
       taLabel: condition,
       taCode: null,
-      folderName: folderLabel || 'ClinicalTrials-gov',
+      folderName: sanitizeFilename(condition) || 'ClinicalTrials-gov',
       status: 'running',
       totalTrials: 0,
       processedCount: 0,
@@ -1583,7 +1586,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       <h3 class="batch-title">
         ${resumeSession ? '⟳ Resuming' : '⬇ Downloading'} ClinicalTrials.gov Protocols
       </h3>
-      <p class="batch-subtitle" id="bpSubtitle">Preparing <strong>${escapeHtml(condition)}</strong>${overallStatus ? ` — ${escapeHtml(overallStatus)}` : ''}…</p>
+      <p class="batch-subtitle" id="bpSubtitle">Preparing <strong>${escapeHtml(condition)}</strong>${phase ? ` — Phase ${escapeHtml(phase)}` : ''}…</p>
       <div class="batch-progress-bar"><div class="batch-progress-fill" id="bpFill" style="width:0%"></div></div>
       <div class="bp-current" id="bpCurrent">Fetching study list…</div>
       <div class="batch-stats-wide">
@@ -1645,7 +1648,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       const resp = await fetchWithRetry(`${API_BASE}/api/ctg/bulk-search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ condition, overallStatus, phase, pageToken: nextPageToken, pageSize: 100 })
+        body: JSON.stringify({ condition, phase, pageToken: nextPageToken, pageSize: 100 })
       });
       const data = await resp.json();
 
@@ -1668,6 +1671,11 @@ async function bulkDownloadByCTG(arg1 = null) {
           if (resumeEl) resumeEl.textContent = parseInt(resumeEl.textContent || '0') + 1;
           continue;
         }
+
+        // Status exclusions — mirror CTIS exclude toggle behaviour
+        const st = (study.overallStatus || '').toUpperCase();
+        if (excludeSuspended  && st === 'SUSPENDED')  { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
+        if (excludeTerminated && st === 'TERMINATED') { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
 
         const docs = (study.documents || []).filter(d => d.url);
 
@@ -2073,13 +2081,20 @@ async function renderDownloadManager() {
 
     const updatedStr = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '';
 
+    const isCTGSession = s.sessionSource === 'ctg';
+    const sourceTag = isCTGSession
+      ? `<span class="dm-source-tag">ClinicalTrials.gov</span>`
+      : `<span class="dm-source-tag">EU CTIS</span>`;
+
     return `
       <div class="dm-session-row" data-session-id="${s.id}">
         <div class="dm-session-header">
           <div class="dm-session-info">
             ${statusBadge}
-            <span class="dm-ta-label">${escapeHtml(s.taLabel || s.taCode)}</span>
+            ${sourceTag}
+            <span class="dm-ta-label">${escapeHtml(s.taLabel || s.taCode || s.condition || '')}</span>
             ${s.indication ? `<span class="dm-indication-label">→ ${escapeHtml(s.indication)}</span>` : ''}
+            ${s.phase ? `<span class="dm-indication-label">Phase ${escapeHtml(s.phase)}</span>` : ''}
           </div>
           <div class="dm-session-actions">
             ${s.status === 'interrupted' ? `<button class="btn-resume" data-session-id="${s.id}">⟳ Resume</button>` : ''}
@@ -2090,10 +2105,10 @@ async function renderDownloadManager() {
           <div class="dm-progress-fill" style="width:${pct}%"></div>
         </div>
         <div class="dm-stats-row">
-          <span><strong>${s.processedCount.toLocaleString()}</strong> / ${s.totalTrials.toLocaleString()} trials</span>
+          <span><strong>${s.processedCount.toLocaleString()}</strong> / ${s.totalTrials.toLocaleString()} ${isCTGSession ? 'studies' : 'trials'}</span>
           <span style="color:var(--green)">⬇ ${s.downloadedCount.toLocaleString()} saved</span>
           <span style="color:var(--amber)">⊘ ${s.skippedCount.toLocaleString()} skipped</span>
-          <span style="color:var(--text-muted)">🌐 ${s.nonEnCount.toLocaleString()} non-EN</span>
+          ${!isCTGSession ? `<span style="color:var(--text-muted)">🌐 ${(s.nonEnCount || 0).toLocaleString()} non-EN</span>` : ''}
           <span style="color:var(--red)">✕ ${s.failedCount.toLocaleString()} failed</span>
           ${updatedStr ? `<span class="dm-timestamp">${updatedStr}</span>` : ''}
         </div>
