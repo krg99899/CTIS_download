@@ -641,8 +641,11 @@ app.get('/api/ctg/retrieve/:nct', async (req, res) => {
     // documentSection is at the root level of the study object, not inside protocolSection
     const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
+    // Accept any typeAbbrev beginning with 'Prot' — covers 'Prot', 'Prot_SAP',
+    // 'Prot_SAP_ICF', 'Prot_ICF'. Combined docs still contain the protocol.
+    // Rejects standalone 'SAP' and 'ICF'.
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot')
+      .filter(doc => typeof doc.typeAbbrev === 'string' && doc.typeAbbrev.startsWith('Prot'))
       .map(doc => ({
         title: doc.label || doc.filename || 'Protocol Document',
         filename: doc.filename || `${nct}_protocol.pdf`,
@@ -692,8 +695,9 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
     // documentSection is at root level
     const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
+    // Accept any typeAbbrev beginning with 'Prot' — covers combined Prot_SAP / Prot_SAP_ICF docs.
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot');
+      .filter(doc => typeof doc.typeAbbrev === 'string' && doc.typeAbbrev.startsWith('Prot'));
 
     if (documents.length === 0) {
       return res.status(404).json({ error: 'Protocol document not found' });
