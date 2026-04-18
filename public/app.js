@@ -145,13 +145,21 @@ const els = {
   totalTrialsStat: $('#totalTrialsStat .stat-value'),
   downloadedStat: $('#downloadedStat .stat-value'),
   btnBatchAll: $('#btnBatchAll'),
-  // Bulk download panel
+  // Bulk download panel — EU CTIS
   bulkTA: $('#bulkTA'),
   bulkIndication: $('#bulkIndication'),
   bulkExcludeSuspended: $('#bulkExcludeSuspended'),
   bulkExcludeTerminated: $('#bulkExcludeTerminated'),
   btnBulkDownload: $('#btnBulkDownload'),
   bulkTrialInfo: $('#bulkTrialInfo'),
+  bulkCTISSection: $('#bulkCTISSection'),
+  // Bulk download panel — ClinicalTrials.gov
+  bulkCTGSection: $('#bulkCTGSection'),
+  bulkCTGCondition: $('#bulkCTGCondition'),
+  bulkCTGStatus: $('#bulkCTGStatus'),
+  bulkCTGPhase: $('#bulkCTGPhase'),
+  btnBulkDownloadCTG: $('#btnBulkDownloadCTG'),
+  bulkCTGTrialInfo: $('#bulkCTGTrialInfo'),
   // Download Manager
   dmSessionList: $('#dmSessionList'),
   dmEmpty: $('#dmEmpty')
@@ -418,6 +426,17 @@ function bindEvents() {
   }
   els.btnBulkDownload.addEventListener('click', bulkDownloadByTA);
 
+  // CTG bulk download controls
+  if (els.bulkCTGCondition) {
+    els.bulkCTGCondition.addEventListener('input', onBulkCTGChange);
+    els.bulkCTGCondition.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') onBulkCTGChange();
+    });
+  }
+  if (els.bulkCTGStatus)  els.bulkCTGStatus.addEventListener('change', onBulkCTGChange);
+  if (els.bulkCTGPhase)   els.bulkCTGPhase.addEventListener('change', onBulkCTGChange);
+  if (els.btnBulkDownloadCTG) els.btnBulkDownloadCTG.addEventListener('click', bulkDownloadByCTG);
+
   // Auto-search on filter change
   [els.trialPhase, els.trialStatus, els.hasResults, els.excludeSuspended].forEach(el => {
     if (el) el.addEventListener('change', () => { state.currentPage = 1; performSearch(); });
@@ -612,21 +631,26 @@ function switchSource(source) {
   state.currentSource = source;
   state.currentPage = 1;
 
-  // Update tab UI
   document.querySelectorAll('.tab-btn').forEach(tab => {
-    if (tab.dataset.source === source) {
-      tab.classList.add('active');
-    } else {
-      tab.classList.remove('active');
-    }
+    tab.classList.toggle('active', tab.dataset.source === source);
   });
 
-  // Reset results
+  // Show/hide bulk panel sections
+  if (els.bulkCTISSection) els.bulkCTISSection.style.display = source === 'ctis' ? '' : 'none';
+  if (els.bulkCTGSection)  els.bulkCTGSection.style.display  = source === 'ctg'  ? '' : 'none';
+
+  // Update bulk panel description
+  const desc = document.getElementById('bulkDescription');
+  if (desc) {
+    desc.innerHTML = source === 'ctg'
+      ? 'Downloads <strong>all</strong> Protocol PDFs uploaded to ClinicalTrials.gov for the given condition — paginated through all results. Interrupted downloads can be <strong>resumed</strong> from the Download Manager below.'
+      : 'Downloads <strong>all</strong> English-language Protocol PDFs (type 104) for the selected therapeutic area — all pages, all trials. Interrupted downloads can be <strong>resumed</strong> from the Download Manager below.';
+  }
+
   state.results = [];
   els.totalTrialsStat.textContent = '—';
   renderResults();
 
-  // Run search with new source
   performSearch();
 }
 
@@ -841,7 +865,43 @@ function renderModal(data, id, source) {
         </div>
       </div>
 
+      <div class="modal-section">
+        <div class="modal-section-title">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="3" width="10" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 6h4M5 9h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          Protocol Documents (${data.documents?.length || 0})
+        </div>
+        <div class="doc-list">
+          ${(data.documents || []).length > 0
+            ? (data.documents || []).map(doc => `
+              <div class="doc-item">
+                <div class="doc-info">
+                  <div class="doc-icon">PDF</div>
+                  <div>
+                    <div class="doc-name" title="${escapeHtml(doc.label || doc.filename)}">${escapeHtml(doc.label || doc.filename)}</div>
+                    <div class="doc-type-label">Protocol${doc.size ? ` • ${formatBytes(doc.size)}` : ''}${doc.date ? ` • ${doc.date}` : ''}</div>
+                  </div>
+                </div>
+                <div class="doc-actions">
+                  <button class="btn-mini btn-mini-green btn-ctg-doc-save"
+                    data-url="${escapeHtml(doc.url)}"
+                    data-filename="${escapeHtml(doc.filename)}"
+                    data-nct="${id}"
+                    title="Save to local folder">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v6m0 0L4 6m2 2l2-2M2 10h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Save
+                  </button>
+                </div>
+              </div>`).join('')
+            : '<p style="color:var(--text-muted);font-size:0.85rem;padding:0.5rem 0">No protocol documents uploaded for this study.</p>'}
+        </div>
+      </div>
+
       <div style="margin-top:1.5rem;display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
+        ${(data.documents || []).length > 0 ? `
+        <button class="btn-outline" id="btnDownloadAllCTG" data-nct="${id}">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download All Protocols
+        </button>` : ''}
         <button class="btn-outline" id="btnViewCTG" data-nct="${id}">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4Z" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>
           View on ClinicalTrials.gov
@@ -852,6 +912,42 @@ function renderModal(data, id, source) {
     els.modalContent.querySelector('#btnViewCTG').addEventListener('click', (e) => {
       window.open(`https://clinicaltrials.gov/study/${e.currentTarget.dataset.nct}`, '_blank');
     });
+
+    // Per-doc save buttons
+    els.modalContent.querySelectorAll('.btn-ctg-doc-save').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const { url, filename, nct } = btn.dataset;
+        if (!url) return;
+        const origHTML = btn.innerHTML;
+        btn.innerHTML = '<span class="btn-spinner"></span>';
+        btn.disabled = true;
+        try {
+          const dirHandle = await getDirectoryHandle();
+          if (!dirHandle) { btn.innerHTML = origHTML; btn.disabled = false; return; }
+          const trialDir = await dirHandle.getDirectoryHandle(nct, { create: true });
+          const saveFilename = `${nct}_${sanitizeFilename(filename)}`;
+          const resp = await fetchWithRetry(
+            `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(saveFilename)}`
+          );
+          await streamToFileInDirectory(trialDir, saveFilename, resp);
+          btn.innerHTML = '✓ Saved';
+          btn.style.background = 'var(--green-dim)';
+          btn.style.color = 'var(--green)';
+          showToast('success', 'Saved', saveFilename);
+        } catch (err) {
+          btn.innerHTML = origHTML;
+          btn.disabled = false;
+          showToast('error', 'Save Failed', err.message);
+        }
+      });
+    });
+
+    // Download all button
+    const btnAll = els.modalContent.querySelector('#btnDownloadAllCTG');
+    if (btnAll) {
+      btnAll.addEventListener('click', () => quickDownloadProtocols(id, '', btnAll, 'ctg'));
+    }
+
     return;
   }
 
@@ -1043,28 +1139,65 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
     let trialResp, trialData, docs;
     
     if (source === 'ctg') {
-      // ClinicalTrials.gov source
-      // Note: ClinicalTrials.gov API doesn't expose direct PDF links
-      // Redirect user to the trial page instead
-      const ctgUrl = `https://clinicaltrials.gov/study/${id}`;
-      showToast('info', 'View on ClinicalTrials.gov',
-        `Protocols for ClinicalTrials.gov studies must be downloaded directly from their website. Opening ${id}...`,
-        5000);
-      window.open(ctgUrl, '_blank');
-      btnEl.innerHTML = origHTML;
-      btnEl.disabled = false;
+      // Fetch study details to get protocol document URLs
+      trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${id}`);
+      trialData = await trialResp.json();
+      docs = trialData.documents || [];
+
+      if (docs.length === 0) {
+        btnEl.innerHTML = 'No protocols';
+        btnEl.style.background = 'var(--amber-dim)';
+        btnEl.style.color = 'var(--amber)';
+        btnEl.style.border = 'none';
+        showToast('info', 'No Protocols', `No protocol documents found for ${id}`);
+        return;
+      }
+
+      let downloaded = 0;
+      let failed = 0;
+      const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
+
+      for (const doc of docs) {
+        const filename = `${id}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
+        try {
+          const docResp = await fetchWithRetry(
+            `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(doc.url)}&filename=${encodeURIComponent(filename)}`
+          );
+          if (!docResp.ok) { failed++; continue; }
+          await streamToFileInDirectory(trialDirHandle, filename, docResp);
+          downloaded++;
+        } catch (err) {
+          failed++;
+          console.error('Failed CTG document', doc.filename, err);
+        }
+      }
+
+      state.downloadCount += downloaded;
+      if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
+
+      if (downloaded > 0) {
+        btnEl.innerHTML = `✓ ${downloaded} file${downloaded > 1 ? 's' : ''}`;
+        btnEl.style.background = 'var(--green-dim)';
+        btnEl.style.color = 'var(--green)';
+        btnEl.style.border = 'none';
+        showToast('success', id, `${downloaded} protocol${downloaded > 1 ? 's' : ''} saved`);
+        if (failed > 0) showToast('error', 'Some Failed', `${failed} protocol(s) failed to download`);
+      } else {
+        btnEl.innerHTML = origHTML;
+        btnEl.disabled = false;
+        showToast('error', 'Download Failed', 'All protocols failed to download');
+      }
       return;
     }
-    
-    // CTIS source (original)
+
+    // CTIS source
     trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${id}`);
     trialData = await trialResp.json();
     docs = trialData.documents || [];
 
-    // STRICT FILTER for CTIS: English Protocol (type 104) ONLY — skip excluded types
-    docs = docs.filter(d => 
-      d.documentType === '104' && 
-      isEnglishDoc(d) && 
+    docs = docs.filter(d =>
+      d.documentType === '104' &&
+      isEnglishDoc(d) &&
       !shouldExcludeDocument(d.title, d.documentType)
     );
 
@@ -1082,15 +1215,10 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
     const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
 
     for (const doc of docs) {
-      const filename = source === 'ctg' ? (doc.filename || `${id}_protocol.pdf`) : `${sanitizeFilename(doc.title)}.pdf`;
+      const filename = `${sanitizeFilename(doc.title)}.pdf`;
       try {
-        let docResp;
-        if (source === 'ctg') {
-          docResp = await fetchWithRetry(`${API_BASE}/api/ctg/document/${id}/${doc.filename || 'protocol.pdf'}`);
-        } else {
-          docResp = await fetchWithRetry(`${API_BASE}/api/document/${id}/${doc.uuid}`);
-        }
-        
+        const docResp = await fetchWithRetry(`${API_BASE}/api/document/${id}/${doc.uuid}`);
+
         if (!docResp.ok) {
           console.error(`Document download returned ${docResp.status}:`, await docResp.text());
           failed++;
@@ -1112,7 +1240,7 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
       btnEl.style.background = 'var(--green-dim)';
       btnEl.style.color = 'var(--green)';
       btnEl.style.border = 'none';
-      showToast('success', `${ctNumber}`, `${downloaded} English protocol${downloaded > 1 ? 's' : ''} saved`);
+      showToast('success', `${id}`, `${downloaded} English protocol${downloaded > 1 ? 's' : ''} saved`);
       if (failed > 0) showToast('error', 'Some Failed', `${failed} protocol(s) failed to download`);
     } else {
       btnEl.innerHTML = origHTML;
@@ -1160,35 +1288,58 @@ async function batchDownloadVisible() {
     overlay.querySelector('#batchCurrent').textContent = i + 1;
     overlay.querySelector('#batchFill').style.width = `${((i + 1) / state.results.length) * 100}%`;
 
-    try {
-      const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${trial.ctNumber}`);
-      const trialData = await trialResp.json();
-      const docs = trialData.documents || [];
-      // STRICT: English Protocol (104) ONLY, skip excluded types
-      const protocolDocs = docs.filter(d => 
-        d.documentType === '104' && 
-        isEnglishDoc(d) && 
-        !shouldExcludeDocument(d.title, d.documentType)
-      );
+    const isCTG = trial.sourceType === 'clinicaltrials.gov';
+    const trialId = isCTG ? trial.nct : trial.ctNumber;
 
-      if (protocolDocs.length === 0) {
-        skipped++;
+    try {
+      if (isCTG) {
+        // ClinicalTrials.gov: fetch study details to get document URLs
+        const trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${trialId}`);
+        const trialData = await trialResp.json();
+        const docs = trialData.documents || [];
+
+        if (docs.length === 0) {
+          skipped++;
+        } else {
+          const trialDirHandle = await dirHandle.getDirectoryHandle(trialId, { create: true });
+          for (const doc of docs) {
+            if (!doc.url) { failed++; continue; }
+            const filename = `${trialId}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
+            try {
+              const docResp = await fetchWithRetry(
+                `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(doc.url)}&filename=${encodeURIComponent(filename)}`
+              );
+              await streamToFileInDirectory(trialDirHandle, filename, docResp);
+              downloaded++;
+            } catch { failed++; }
+          }
+        }
       } else {
-        const trialDirHandle = await dirHandle.getDirectoryHandle(trial.ctNumber, { create: true });
-        for (const doc of protocolDocs) {
-          const filename = `${sanitizeFilename(doc.title)}.pdf`;
-          try {
-            const docResp = await fetchWithRetry(`${API_BASE}/api/document/${trial.ctNumber}/${doc.uuid}`);
-            await streamToFileInDirectory(trialDirHandle, filename, docResp);
-            downloaded++;
-          } catch {
-            failed++;
+        // CTIS: English Protocol type 104 only
+        const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${trialId}`);
+        const trialData = await trialResp.json();
+        const docs = trialData.documents || [];
+        const protocolDocs = docs.filter(d =>
+          d.documentType === '104' &&
+          isEnglishDoc(d) &&
+          !shouldExcludeDocument(d.title, d.documentType)
+        );
+
+        if (protocolDocs.length === 0) {
+          skipped++;
+        } else {
+          const trialDirHandle = await dirHandle.getDirectoryHandle(trialId, { create: true });
+          for (const doc of protocolDocs) {
+            const filename = `${sanitizeFilename(doc.title)}.pdf`;
+            try {
+              const docResp = await fetchWithRetry(`${API_BASE}/api/document/${trialId}/${doc.uuid}`);
+              await streamToFileInDirectory(trialDirHandle, filename, docResp);
+              downloaded++;
+            } catch { failed++; }
           }
         }
       }
-    } catch {
-      failed++;
-    }
+    } catch { failed++; }
 
     overlay.querySelector('#batchDl').textContent = downloaded;
     overlay.querySelector('#batchSkip').textContent = skipped;
@@ -1298,6 +1449,310 @@ async function onBulkTAChange() {
       Start Bulk Download
     `;
   }
+}
+
+// ═══════════════════════════════════════════
+// CTG BULK DOWNLOAD — by condition/keyword
+// Full cursor pagination + IndexedDB checkpoint + resume
+// ═══════════════════════════════════════════
+
+async function onBulkCTGChange() {
+  const condition = els.bulkCTGCondition?.value.trim();
+
+  if (!condition) {
+    if (els.btnBulkDownloadCTG) {
+      els.btnBulkDownloadCTG.disabled = true;
+      els.btnBulkDownloadCTG.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Start Bulk Download`;
+    }
+    if (els.bulkCTGTrialInfo) els.bulkCTGTrialInfo.style.display = 'none';
+    return;
+  }
+
+  if (els.bulkCTGTrialInfo) {
+    els.bulkCTGTrialInfo.style.display = 'flex';
+    els.bulkCTGTrialInfo.innerHTML = `
+      <div class="bulk-info-loading">
+        <span class="btn-spinner" style="border-color:rgba(99,102,241,0.3);border-top-color:var(--accent-primary-light)"></span>
+        Analyzing scope on ClinicalTrials.gov…
+      </div>`;
+  }
+  if (els.btnBulkDownloadCTG) {
+    els.btnBulkDownloadCTG.disabled = false;
+    els.btnBulkDownloadCTG.innerHTML = `<span class="btn-spinner"></span> Checking…`;
+  }
+
+  try {
+    const overallStatus = els.bulkCTGStatus?.value || '';
+    const phase = els.bulkCTGPhase?.value || '';
+
+    const resp = await fetch(`${API_BASE}/api/ctg/bulk-search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition, overallStatus, phase, pageSize: 1 })
+    });
+    if (!resp.ok) throw new Error('Count fetch failed');
+
+    const data = await resp.json();
+    const total = data.totalCount || 0;
+
+    if (els.bulkCTGTrialInfo) {
+      els.bulkCTGTrialInfo.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span>Found <strong>${total.toLocaleString()}</strong> studies matching <strong>${escapeHtml(condition)}</strong>. Bulk download will fetch Protocol PDFs only.</span>`;
+    }
+
+    if (els.btnBulkDownloadCTG) {
+      els.btnBulkDownloadCTG.disabled = total === 0;
+      els.btnBulkDownloadCTG.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Start Bulk Download (${total.toLocaleString()} studies)`;
+    }
+  } catch (err) {
+    if (els.bulkCTGTrialInfo) {
+      els.bulkCTGTrialInfo.innerHTML = `<span style="color:var(--text-muted)">Ready to download — unable to estimate count at this time.</span>`;
+    }
+    if (els.btnBulkDownloadCTG) {
+      els.btnBulkDownloadCTG.disabled = false;
+      els.btnBulkDownloadCTG.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Start Bulk Download`;
+    }
+  }
+}
+
+async function bulkDownloadByCTG(arg1 = null) {
+  const isSession = arg1 && typeof arg1 === 'object' && arg1.id && arg1.sessionSource === 'ctg';
+  const resumeSession = isSession ? arg1 : null;
+
+  const condition = resumeSession ? resumeSession.condition : els.bulkCTGCondition?.value.trim();
+  if (!condition) return;
+
+  const overallStatus = resumeSession ? resumeSession.overallStatus : (els.bulkCTGStatus?.value || '');
+  const phase         = resumeSession ? resumeSession.phase         : (els.bulkCTGPhase?.value || '');
+
+  if (!window.showDirectoryPicker) {
+    showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a Chromium-based browser.');
+    return;
+  }
+
+  let dirHandle;
+  try {
+    dirHandle = await getDirectoryHandle();
+  } catch (err) {
+    showToast('error', 'Folder Access Error', 'Unable to access selected folder. Please try again.');
+    return;
+  }
+  if (!dirHandle) return;
+
+  state.bulkCancelled = false;
+
+  let session;
+  if (resumeSession) {
+    session = { ...resumeSession, status: 'running', resumedAt: Date.now() };
+  } else {
+    const folderLabel = sanitizeFilename(condition);
+    session = {
+      id: generateSessionId(),
+      sessionSource: 'ctg',
+      condition,
+      overallStatus,
+      phase,
+      taLabel: condition,
+      taCode: null,
+      folderName: folderLabel || 'ClinicalTrials-gov',
+      status: 'running',
+      totalTrials: 0,
+      processedCount: 0,
+      downloadedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      nonEnCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+  }
+  await dmSaveSession(session);
+
+  // Build progress overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'batch-overlay';
+  overlay.innerHTML = `
+    <div class="batch-card batch-card-wide">
+      <h3 class="batch-title">
+        ${resumeSession ? '⟳ Resuming' : '⬇ Downloading'} ClinicalTrials.gov Protocols
+      </h3>
+      <p class="batch-subtitle" id="bpSubtitle">Preparing <strong>${escapeHtml(condition)}</strong>${overallStatus ? ` — ${escapeHtml(overallStatus)}` : ''}…</p>
+      <div class="batch-progress-bar"><div class="batch-progress-fill" id="bpFill" style="width:0%"></div></div>
+      <div class="bp-current" id="bpCurrent">Fetching study list…</div>
+      <div class="batch-stats-wide">
+        <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpProcessed">${session.processedCount}</span>
+          <span class="batch-stat-label">Processed</span>
+        </div>
+        <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpDownloaded" style="color:var(--green)">${session.downloadedCount}</span>
+          <span class="batch-stat-label">Downloaded</span>
+        </div>
+        <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpResumed" style="color:var(--accent-primary-light)">${resumeSession ? session.processedCount : 0}</span>
+          <span class="batch-stat-label">Resumed</span>
+        </div>
+        <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpSkipped" style="color:var(--amber)">${session.skippedCount}</span>
+          <span class="batch-stat-label">No Protocol</span>
+        </div>
+        <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpFailed" style="color:var(--red)">${session.failedCount}</span>
+          <span class="batch-stat-label">Failed</span>
+        </div>
+      </div>
+      <button class="btn-cancel-bulk" id="btnCancelBulk">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#btnCancelBulk').addEventListener('click', () => {
+    state.bulkCancelled = true;
+    overlay.querySelector('#btnCancelBulk').disabled = true;
+    overlay.querySelector('#btnCancelBulk').textContent = 'Cancelling…';
+    overlay.querySelector('#bpSubtitle').textContent = 'Cancelling — finishing current study…';
+  });
+
+  function updateOverlay() {
+    const pct = session.totalTrials > 0 ? ((session.processedCount / session.totalTrials) * 100).toFixed(1) : 0;
+    overlay.querySelector('#bpFill').style.width = `${pct}%`;
+    overlay.querySelector('#bpProcessed').textContent  = session.processedCount;
+    overlay.querySelector('#bpDownloaded').textContent = session.downloadedCount;
+    overlay.querySelector('#bpSkipped').textContent    = session.skippedCount;
+    overlay.querySelector('#bpFailed').textContent     = session.failedCount;
+    if (session.totalTrials > 0) {
+      overlay.querySelector('#bpSubtitle').innerHTML =
+        `Processing <strong>${session.processedCount.toLocaleString()}</strong> of <strong>${session.totalTrials.toLocaleString()}</strong> studies`;
+    }
+  }
+
+  // Create condition subfolder
+  const taFolder = await dirHandle.getDirectoryHandle(session.folderName, { create: true });
+
+  let nextPageToken = null;
+  let isFirstPage   = true;
+
+  try {
+    do {
+      if (state.bulkCancelled) break;
+
+      const resp = await fetchWithRetry(`${API_BASE}/api/ctg/bulk-search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ condition, overallStatus, phase, pageToken: nextPageToken, pageSize: 100 })
+      });
+      const data = await resp.json();
+
+      if (isFirstPage) {
+        session.totalTrials = data.totalCount || 0;
+        isFirstPage = false;
+      }
+
+      nextPageToken = data.nextPageToken || null;
+      const studies = data.studies || [];
+
+      for (const study of studies) {
+        if (state.bulkCancelled) break;
+
+        overlay.querySelector('#bpCurrent').textContent = study.nct;
+
+        const alreadyProcessed = await dmIsProcessed(session.id, study.nct);
+        if (alreadyProcessed) {
+          const resumeEl = overlay.querySelector('#bpResumed');
+          if (resumeEl) resumeEl.textContent = parseInt(resumeEl.textContent || '0') + 1;
+          continue;
+        }
+
+        const docs = (study.documents || []).filter(d => d.url);
+
+        if (docs.length === 0) {
+          session.skippedCount++;
+        } else {
+          for (const doc of docs) {
+            const alreadyDl = await dmIsDownloaded(session.id, study.nct, doc.filename);
+            if (alreadyDl) continue;
+
+            const filename = `${study.nct}_${sanitizeFilename(doc.filename || 'protocol.pdf')}`;
+            try {
+              const docResp = await fetchWithRetry(
+                `${API_BASE}/api/ctg/proxy-pdf?url=${encodeURIComponent(doc.url)}&filename=${encodeURIComponent(filename)}`
+              );
+              if (!docResp.ok) {
+                console.error(`CTG doc download failed [${study.nct}/${doc.filename}]: ${docResp.status}`);
+                session.failedCount++;
+                continue;
+              }
+              await streamToFileInDirectory(taFolder, filename, docResp);
+              await dmMarkDownloaded(session.id, study.nct, doc.filename);
+              session.downloadedCount++;
+              console.log(`✓ CTG Downloaded: ${filename}`);
+            } catch (err) {
+              console.error(`Failed CTG doc [${study.nct}/${doc.filename}]:`, err.message);
+              session.failedCount++;
+            }
+          }
+        }
+
+        session.processedCount++;
+        session.updatedAt = Date.now();
+        await dmMarkProcessed(session.id, study.nct);
+        await dmSaveSession(session);
+        updateOverlay();
+        await sleep(100);
+      }
+
+    } while (nextPageToken && !state.bulkCancelled);
+
+  } catch (err) {
+    showToast('error', 'Bulk Download Error', err.message);
+  }
+
+  // Finalise session
+  session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
+  session.updatedAt = Date.now();
+  await dmSaveSession(session);
+
+  state.downloadCount += session.downloadedCount;
+  if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
+
+  const summaryMsg = state.bulkCancelled
+    ? `Cancelled — ${session.downloadedCount} protocols saved. Click Resume to continue.`
+    : `${session.downloadedCount} protocols saved • ${session.skippedCount} skipped (no protocol) • ${session.failedCount} failed`;
+
+  showToast(
+    state.bulkCancelled ? 'info' : 'success',
+    state.bulkCancelled ? 'Download Interrupted' : 'Bulk Download Complete',
+    summaryMsg
+  );
+
+  overlay.querySelector('#bpCurrent').textContent = state.bulkCancelled ? 'Interrupted — use Resume to continue.' : 'Complete!';
+  overlay.querySelector('#btnCancelBulk').textContent = 'Close';
+  overlay.querySelector('#btnCancelBulk').disabled = false;
+  overlay.querySelector('#btnCancelBulk').onclick = () => {
+    overlay.style.opacity = '0';
+    overlay.style.transition = 'opacity 0.3s';
+    setTimeout(() => overlay.remove(), 300);
+    renderDownloadManager();
+  };
+
+  if (!state.bulkCancelled) {
+    setTimeout(() => {
+      if (overlay.parentNode) {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.3s';
+        setTimeout(() => overlay.remove(), 300);
+      }
+      renderDownloadManager();
+    }, 5000);
+  }
+
+  renderDownloadManager();
 }
 
 async function bulkDownloadByTA(arg1 = null) {
@@ -1651,7 +2106,12 @@ async function renderDownloadManager() {
       const sid = btn.dataset.sessionId;
       const sessions = await dmGetAllSessions();
       const session  = sessions.find(s => s.id === sid);
-      if (session) bulkDownloadByTA(session);
+      if (!session) return;
+      if (session.sessionSource === 'ctg') {
+        bulkDownloadByCTG(session);
+      } else {
+        bulkDownloadByTA(session);
+      }
     });
   });
 

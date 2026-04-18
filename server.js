@@ -207,26 +207,18 @@ app.post('/api/ctg/search', async (req, res) => {
     const phase = req.body.phase || '';
     const status = req.body.status || '';
     const pageSize = req.body.pageSize || 20;
-    
-    // Build query filters for ClinicalTrials.gov API v2
-    // Format: query.cond=condition&query.phase=PHASE1, etc.
+    const pageToken = req.body.pageToken || null;
+
     const params = new URLSearchParams({
       format: 'json',
-      pageSize: Math.min(pageSize, 100),  // Cap at 100
+      pageSize: Math.min(pageSize, 100),
       countTotal: true
     });
-    
-    // Add keyword search on condition
-    if (keyword) {
-      params.append('query.cond', keyword);
-    }
-    
-    // Map phase to ClinicalTrials.gov format
-    if (phase) {
-      params.append('query.phase', `PHASE${phase.toUpperCase()}`);
-    }
-    
-    // Map status to ClinicalTrials.gov format
+
+    if (keyword) params.append('query.cond', keyword);
+
+    if (phase) params.append('filter.phase', `PHASE${phase.replace('PHASE', '').toUpperCase()}`);
+
     if (status) {
       const statusMap = {
         'RECRUITING': 'RECRUITING',
@@ -234,9 +226,10 @@ app.post('/api/ctg/search', async (req, res) => {
         'COMPLETED': 'COMPLETED',
         'TERMINATED': 'TERMINATED'
       };
-      const ctgStatus = statusMap[status] || status;
-      params.append('query.recr', ctgStatus);
+      params.append('filter.overallStatus', statusMap[status] || status);
     }
+
+    if (pageToken) params.append('pageToken', pageToken);
     
     const response = await fetch(`${CTG_API}/studies?${params.toString()}`, {
       method: 'GET',
@@ -281,8 +274,8 @@ app.post('/api/ctg/search', async (req, res) => {
     
     res.json({
       studies: studies,
-      totalCount: data.nctId ? data.nctId.length : 0,
-      pageToken: data.pageToken || null
+      totalCount: data.totalCount || 0,
+      nextPageToken: data.nextPageToken || null
     });
     
   } catch (err) {
@@ -298,7 +291,7 @@ app.post('/api/ctg/search', async (req, res) => {
 app.get('/api/ctg/retrieve/:nct', async (req, res) => {
   try {
     const { nct } = req.params;
-    
+
     const response = await fetch(`${CTG_API}/studies/${nct}`, {
       method: 'GET',
       headers: {
@@ -306,49 +299,51 @@ app.get('/api/ctg/retrieve/:nct', async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-    
+
     if (!response.ok) {
       return res.status(404).json({ error: 'Study not found' });
     }
-    
+
     const data = await response.json();
     const protocolSection = data.protocolSection || {};
-    
-    // Extract protocol document if available
-    const documentSection = protocolSection.documentSection || {};
+
+    // documentSection is at the root level of the study object, not inside protocolSection
+    const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Protocol')
+      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP')
       .map(doc => ({
-        title: doc.filename || 'Protocol Document',
+        title: doc.label || doc.filename || 'Protocol Document',
         filename: doc.filename || `${nct}_protocol.pdf`,
         url: doc.url || '',
         typeAbbrev: doc.typeAbbrev,
+        label: doc.label || 'Study Protocol',
+        size: doc.size || 0,
+        date: doc.date || '',
         docType: 'Protocol'
       }));
-    
+
     res.json({
       nct: data.nctId,
-      title: protocolSection.identificationModule?.officialTitle || '',
+      title: protocolSection.identificationModule?.officialTitle || protocolSection.identificationModule?.briefTitle || '',
       documents: documents,
       protocolSection: protocolSection
     });
-    
+
   } catch (err) {
     console.error('ClinicalTrials.gov retrieve error:', err.message);
-    res.status(500).json({ 
-      error: 'Failed to retrieve study', 
-      details: err.message 
+    res.status(500).json({
+      error: 'Failed to retrieve study',
+      details: err.message
     });
   }
 });
 
-// Download protocol from ClinicalTrials.gov
+// Download a specific protocol document from ClinicalTrials.gov by filename
 app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
   try {
     const { nct, filename } = req.params;
-    
-    // First get the study to find the document URL
+
     const response = await fetch(`${CTG_API}/studies/${nct}`, {
       method: 'GET',
       headers: {
@@ -356,53 +351,165 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-    
+
     if (!response.ok) {
       return res.status(404).json({ error: 'Study not found' });
     }
-    
+
     const data = await response.json();
-    const protocolSection = data.protocolSection || {};
-    const documentSection = protocolSection.documentSection || {};
+    // documentSection is at root level
+    const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Protocol');
-    
+      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP');
+
     if (documents.length === 0) {
       return res.status(404).json({ error: 'Protocol document not found' });
     }
-    
-    const docUrl = documents[0].url;
-    
+
+    // Find by filename match, or fall back to first document
+    const doc = documents.find(d => d.filename === filename) || documents[0];
+    const docUrl = doc.url;
+
     if (!docUrl) {
       return res.status(404).json({ error: 'Document URL not available' });
     }
-    
-    // Stream the PDF from ClinicalTrials.gov
+
     const fileResponse = await fetch(docUrl, { method: 'GET' });
-    
+
     if (!fileResponse.ok) {
-      return res.status(fileResponse.status).json({ 
-        error: 'Failed to fetch PDF from ClinicalTrials.gov' 
+      return res.status(fileResponse.status).json({
+        error: 'Failed to fetch PDF from ClinicalTrials.gov'
       });
     }
-    
-    console.log(`✓ Proxying ClinicalTrials.gov Protocol [${nct}/${filename}] — ${fileResponse.headers.get('content-length')} bytes`);
-    
+
+    const safeFilename = (doc.filename || filename).replace(/[^\w\s.\-]/g, '_');
+    console.log(`✓ Proxying CTG Protocol [${nct}/${safeFilename}] — ${fileResponse.headers.get('content-length')} bytes`);
+
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store');
-    
+
     fileResponse.body.pipe(res);
-    
+
   } catch (err) {
     console.error('ClinicalTrials.gov download error:', err.message);
-    res.status(500).json({ 
-      error: 'Failed to download document', 
-      details: err.message 
+    res.status(500).json({
+      error: 'Failed to download document',
+      details: err.message
     });
+  }
+});
+
+// Proxy a PDF directly from a validated ClinicalTrials.gov CDN URL
+// Used by bulk download to avoid re-fetching study metadata for each doc
+app.get('/api/ctg/proxy-pdf', async (req, res) => {
+  try {
+    const { url, filename } = req.query;
+
+    if (!url) return res.status(400).json({ error: 'url parameter required' });
+
+    let parsed;
+    try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    const allowedHosts = ['cdn.clinicaltrials.gov', 'clinicaltrials.gov'];
+    if (!allowedHosts.some(h => parsed.hostname === h || parsed.hostname.endsWith('.' + h))) {
+      return res.status(400).json({ error: 'URL must be from clinicaltrials.gov' });
+    }
+
+    const fileResponse = await fetch(url, { method: 'GET' });
+
+    if (!fileResponse.ok) {
+      return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF' });
+    }
+
+    const safeFilename = (filename || 'protocol.pdf').replace(/[^\w\s.\-]/g, '_');
+    console.log(`✓ Proxying CTG PDF via proxy-pdf: ${safeFilename}`);
+
+    const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+
+    fileResponse.body.pipe(res);
+
+  } catch (err) {
+    console.error('CTG proxy-pdf error:', err.message);
+    res.status(500).json({ error: 'Failed to proxy PDF', details: err.message });
+  }
+});
+
+// Bulk search ClinicalTrials.gov — returns studies with protocol document info
+// Uses cursor-based pagination via nextPageToken
+app.post('/api/ctg/bulk-search', async (req, res) => {
+  try {
+    const { condition, phase, overallStatus, pageToken, pageSize = 100 } = req.body;
+
+    const params = new URLSearchParams({
+      format: 'json',
+      pageSize: Math.min(pageSize, 100),
+      countTotal: true
+    });
+
+    if (condition) params.append('query.cond', condition);
+    if (phase) params.append('filter.phase', `PHASE${phase.replace('PHASE', '')}`);
+    if (overallStatus) params.append('filter.overallStatus', overallStatus);
+    if (pageToken) params.append('pageToken', pageToken);
+
+    const response = await fetch(`${CTG_API}/studies?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({
+        error: 'ClinicalTrials.gov bulk search failed',
+        details: errorText
+      });
+    }
+
+    const data = await response.json();
+
+    const studies = (data.studies || []).map(study => {
+      const protocolSection = study.protocolSection || {};
+      const identificationModule = protocolSection.identificationModule || {};
+      const statusModule = protocolSection.statusModule || {};
+
+      // documentSection is at root level
+      const documentSection = study.documentSection || {};
+      const largeDocumentModule = documentSection.largeDocumentModule || {};
+      const largeDocs = (largeDocumentModule.largeDocs || []).filter(
+        doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP'
+      );
+
+      return {
+        nct: identificationModule.nctId || '',
+        title: identificationModule.officialTitle || identificationModule.briefTitle || '',
+        overallStatus: statusModule.overallStatus || '',
+        documents: largeDocs.map(doc => ({
+          filename: doc.filename || `${identificationModule.nctId}_protocol.pdf`,
+          url: doc.url || '',
+          label: doc.label || 'Study Protocol',
+          size: doc.size || 0
+        }))
+      };
+    });
+
+    res.json({
+      studies,
+      totalCount: data.totalCount || 0,
+      nextPageToken: data.nextPageToken || null
+    });
+
+  } catch (err) {
+    console.error('CTG bulk search error:', err.message);
+    res.status(500).json({ error: 'Failed to bulk search ClinicalTrials.gov', details: err.message });
   }
 });
 
