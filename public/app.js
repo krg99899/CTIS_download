@@ -680,8 +680,9 @@ function renderResults() {
     });
   });
 
-  // Only scroll to results if user manually searched (not initial page load)
-  if (state.currentPage > 1 || els.searchInput.value.trim().length > 0 || els.therapeuticArea.value) {
+  // Only scroll to results if user did a text search or navigated to another page
+  // Don't scroll just for selecting filters (TA, indication, phase, status)
+  if (state.currentPage > 1 || els.searchInput.value.trim().length > 0) {
     els.resultsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
