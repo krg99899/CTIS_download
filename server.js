@@ -452,9 +452,10 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
       pageSize: Math.min(pageSize, 100),
       countTotal: true,
       aggFilters: 'docs:prot',  // only studies with an uploaded protocol PDF
-      // Explicitly request fields including LargeDocModule so document URLs
-      // are included in the list response (not returned by default)
-      fields: 'NCTId,OfficialTitle,BriefTitle,OverallStatus,LargeDocModule'
+      // Only request the fields we need — documentSection is NOT reliably
+      // returned by the list endpoint, so documents are fetched per-study
+      // in the frontend using the /api/ctg/retrieve/:nct endpoint instead.
+      fields: 'NCTId,OfficialTitle,BriefTitle,OverallStatus'
     });
 
     if (condition) params.append('query.cond', condition);
@@ -485,24 +486,12 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
       const identificationModule = protocolSection.identificationModule || {};
       const statusModule = protocolSection.statusModule || {};
 
-      // documentSection is at root level
-      const documentSection = study.documentSection || {};
-      const largeDocumentModule = documentSection.largeDocumentModule || {};
-      // Only typeAbbrev 'Prot' — strict protocol documents only, no SAP, ICF, or other types
-      const largeDocs = (largeDocumentModule.largeDocs || []).filter(
-        doc => doc.typeAbbrev === 'Prot'
-      );
+      const nctId = study.nctId || identificationModule.nctId || '';
 
       return {
-        nct: identificationModule.nctId || '',
+        nct: nctId,
         title: identificationModule.officialTitle || identificationModule.briefTitle || '',
-        overallStatus: statusModule.overallStatus || '',
-        documents: largeDocs.map(doc => ({
-          filename: doc.filename || `${identificationModule.nctId}_protocol.pdf`,
-          url: doc.url || '',
-          label: doc.label || 'Study Protocol',
-          size: doc.size || 0
-        }))
+        overallStatus: statusModule.overallStatus || ''
       };
     });
 
