@@ -1719,9 +1719,21 @@ async function bulkDownloadByCTG(arg1 = null) {
         if (excludeSuspended  && st === 'SUSPENDED')  { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
         if (excludeTerminated && st === 'TERMINATED') { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
 
-        const allDocs    = (study.documents || []).filter(d => d.url);
-        const englishDocs = allDocs.filter(d => isEnglishCtgDoc(d));
-        const nonEnCount  = allDocs.length - englishDocs.length;
+        // Get documents from search payload; if empty (LargeDocModule not returned
+        // by search API), fall back to a per-study retrieve call.
+        let rawDocs = (study.documents || []).filter(d => d.url);
+        if (rawDocs.length === 0) {
+          try {
+            const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
+            const studyData = await studyResp.json();
+            rawDocs = (studyData.documents || []).filter(d => d.url);
+          } catch (e) {
+            console.error(`[${study.nct}] Fallback retrieve failed:`, e.message);
+          }
+        }
+
+        const englishDocs = rawDocs.filter(d => isEnglishCtgDoc(d));
+        const nonEnCount  = rawDocs.length - englishDocs.length;
         session.nonEnCount += nonEnCount;
 
         if (englishDocs.length === 0) {

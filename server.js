@@ -451,7 +451,10 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
       format: 'json',
       pageSize: Math.min(pageSize, 100),
       countTotal: true,
-      aggFilters: 'docs:prot'   // only return studies that have a protocol PDF uploaded
+      aggFilters: 'docs:prot',  // only studies with an uploaded protocol PDF
+      // Explicitly request fields including LargeDocModule so document URLs
+      // are included in the list response (not returned by default)
+      fields: 'NCTId,OfficialTitle,BriefTitle,OverallStatus,LargeDocModule'
     });
 
     if (condition) params.append('query.cond', condition);
