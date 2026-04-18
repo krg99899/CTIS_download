@@ -155,6 +155,8 @@ const els = {
   bulkCTISSection: $('#bulkCTISSection'),
   // Bulk download panel — ClinicalTrials.gov
   bulkCTGSection: $('#bulkCTGSection'),
+  bulkCTGTA: $('#bulkCTGTA'),
+  bulkCTGIndication: $('#bulkCTGIndication'),
   bulkCTGCondition: $('#bulkCTGCondition'),
   bulkCTGPhase: $('#bulkCTGPhase'),
   bulkCTGExcludeSuspended: $('#bulkCTGExcludeSuspended'),
@@ -428,6 +430,21 @@ function bindEvents() {
   els.btnBulkDownload.addEventListener('click', bulkDownloadByTA);
 
   // CTG bulk download controls
+  if (els.bulkCTGTA) {
+    els.bulkCTGTA.addEventListener('change', () => {
+      const val = els.bulkCTGTA.value;
+      populateIndicationDropdown(val, els.bulkCTGIndication);
+      // Clear custom keyword when TA changes so TA drives the search
+      if (els.bulkCTGCondition) els.bulkCTGCondition.value = '';
+      onBulkCTGChange();
+    });
+  }
+  if (els.bulkCTGIndication) {
+    els.bulkCTGIndication.addEventListener('change', () => {
+      if (els.bulkCTGCondition) els.bulkCTGCondition.value = '';
+      onBulkCTGChange();
+    });
+  }
   if (els.bulkCTGCondition) {
     els.bulkCTGCondition.addEventListener('input', onBulkCTGChange);
     els.bulkCTGCondition.addEventListener('keydown', (e) => {
@@ -1458,8 +1475,19 @@ async function onBulkTAChange() {
 // Full cursor pagination + IndexedDB checkpoint + resume
 // ═══════════════════════════════════════════
 
+// Priority: custom keyword → indication → TA label
+function getCtgBulkCondition() {
+  const custom = els.bulkCTGCondition?.value.trim();
+  if (custom) return custom;
+  const ind = (els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() : '';
+  if (ind) return ind;
+  const taCode = els.bulkCTGTA?.value;
+  if (taCode) return TA_LABELS[taCode] || taCode;
+  return '';
+}
+
 async function onBulkCTGChange() {
-  const condition = els.bulkCTGCondition?.value.trim();
+  const condition = getCtgBulkCondition();
 
   if (!condition) {
     if (els.btnBulkDownloadCTG) {
@@ -1527,12 +1555,14 @@ async function bulkDownloadByCTG(arg1 = null) {
   const isSession = arg1 && typeof arg1 === 'object' && arg1.id && arg1.sessionSource === 'ctg';
   const resumeSession = isSession ? arg1 : null;
 
-  const condition = resumeSession ? resumeSession.condition : els.bulkCTGCondition?.value.trim();
+  const condition = resumeSession ? resumeSession.condition : getCtgBulkCondition();
   if (!condition) return;
 
   const phase              = resumeSession ? resumeSession.phase              : (els.bulkCTGPhase?.value || '');
   const excludeSuspended   = resumeSession ? resumeSession.excludeSuspended   : (els.bulkCTGExcludeSuspended?.checked ?? true);
   const excludeTerminated  = resumeSession ? resumeSession.excludeTerminated  : (els.bulkCTGExcludeTerminated?.checked ?? true);
+  const taCode             = resumeSession ? resumeSession.taCode             : (els.bulkCTGTA?.value || null);
+  const indication         = resumeSession ? resumeSession.indication         : ((els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() || null : null);
 
   if (!window.showDirectoryPicker) {
     showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a Chromium-based browser.');
@@ -1555,6 +1585,10 @@ async function bulkDownloadByCTG(arg1 = null) {
     session = { ...resumeSession, status: 'running', resumedAt: Date.now() };
   } else {
     const folderLabel = sanitizeFilename(condition);
+    const displayLabel = indication || (taCode ? getTherapeuticAreaLabel(taCode) : condition);
+    const folderBase   = indication ? sanitizeFilename(`${getTherapeuticAreaLabel(taCode || '')} - ${indication}`)
+                       : taCode     ? sanitizeFilename(getTherapeuticAreaLabel(taCode))
+                       :              sanitizeFilename(condition);
     session = {
       id: generateSessionId(),
       sessionSource: 'ctg',
@@ -1562,9 +1596,10 @@ async function bulkDownloadByCTG(arg1 = null) {
       phase,
       excludeSuspended,
       excludeTerminated,
-      taLabel: condition,
-      taCode: null,
-      folderName: sanitizeFilename(condition) || 'ClinicalTrials-gov',
+      taCode,
+      indication,
+      taLabel: displayLabel || condition,
+      folderName: folderBase || 'ClinicalTrials-gov',
       status: 'running',
       totalTrials: 0,
       processedCount: 0,
