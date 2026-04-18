@@ -1161,7 +1161,8 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
       // Fetch study details to get protocol document URLs
       trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${id}`);
       trialData = await trialResp.json();
-      docs = trialData.documents || [];
+      // English protocols only
+      docs = (trialData.documents || []).filter(d => isEnglishCtgDoc(d));
 
       if (docs.length === 0) {
         btnEl.innerHTML = 'No protocols';
@@ -1315,7 +1316,8 @@ async function batchDownloadVisible() {
         // ClinicalTrials.gov: fetch study details to get document URLs
         const trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${trialId}`);
         const trialData = await trialResp.json();
-        const docs = trialData.documents || [];
+        // English protocols only
+        const docs = (trialData.documents || []).filter(d => isEnglishCtgDoc(d));
 
         if (docs.length === 0) {
           skipped++;
@@ -1642,6 +1644,10 @@ async function bulkDownloadByCTG(arg1 = null) {
           <span class="batch-stat-label">No Protocol</span>
         </div>
         <div class="batch-stat-item">
+          <span class="batch-stat-value" id="bpNonEn" style="color:var(--text-muted)">${session.nonEnCount}</span>
+          <span class="batch-stat-label">Non-English</span>
+        </div>
+        <div class="batch-stat-item">
           <span class="batch-stat-value" id="bpFailed" style="color:var(--red)">${session.failedCount}</span>
           <span class="batch-stat-label">Failed</span>
         </div>
@@ -1663,6 +1669,7 @@ async function bulkDownloadByCTG(arg1 = null) {
     overlay.querySelector('#bpProcessed').textContent  = session.processedCount;
     overlay.querySelector('#bpDownloaded').textContent = session.downloadedCount;
     overlay.querySelector('#bpSkipped').textContent    = session.skippedCount;
+    overlay.querySelector('#bpNonEn').textContent      = session.nonEnCount;
     overlay.querySelector('#bpFailed').textContent     = session.failedCount;
     if (session.totalTrials > 0) {
       overlay.querySelector('#bpSubtitle').innerHTML =
@@ -1712,12 +1719,18 @@ async function bulkDownloadByCTG(arg1 = null) {
         if (excludeSuspended  && st === 'SUSPENDED')  { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
         if (excludeTerminated && st === 'TERMINATED') { session.skippedCount++; session.processedCount++; await dmMarkProcessed(session.id, study.nct); updateOverlay(); continue; }
 
-        const docs = (study.documents || []).filter(d => d.url);
+        const allDocs    = (study.documents || []).filter(d => d.url);
+        const englishDocs = allDocs.filter(d => isEnglishCtgDoc(d));
+        const nonEnCount  = allDocs.length - englishDocs.length;
+        session.nonEnCount += nonEnCount;
 
-        if (docs.length === 0) {
+        if (englishDocs.length === 0) {
           session.skippedCount++;
+          if (nonEnCount > 0) {
+            console.log(`[${study.nct}] Skipped — ${nonEnCount} non-English protocol(s) excluded`);
+          }
         } else {
-          for (const doc of docs) {
+          for (const doc of englishDocs) {
             const alreadyDl = await dmIsDownloaded(session.id, study.nct, doc.filename);
             if (alreadyDl) continue;
 
@@ -1766,7 +1779,7 @@ async function bulkDownloadByCTG(arg1 = null) {
 
   const summaryMsg = state.bulkCancelled
     ? `Cancelled — ${session.downloadedCount} protocols saved. Click Resume to continue.`
-    : `${session.downloadedCount} protocols saved • ${session.skippedCount} skipped (no protocol) • ${session.failedCount} failed`;
+    : `${session.downloadedCount} English protocols saved • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
 
   showToast(
     state.bulkCancelled ? 'info' : 'success',
@@ -2143,7 +2156,7 @@ async function renderDownloadManager() {
           <span><strong>${s.processedCount.toLocaleString()}</strong> / ${s.totalTrials.toLocaleString()} ${isCTGSession ? 'studies' : 'trials'}</span>
           <span style="color:var(--green)">⬇ ${s.downloadedCount.toLocaleString()} saved</span>
           <span style="color:var(--amber)">⊘ ${s.skippedCount.toLocaleString()} skipped</span>
-          ${!isCTGSession ? `<span style="color:var(--text-muted)">🌐 ${(s.nonEnCount || 0).toLocaleString()} non-EN</span>` : ''}
+          <span style="color:var(--text-muted)">🌐 ${(s.nonEnCount || 0).toLocaleString()} non-EN</span>
           <span style="color:var(--red)">✕ ${s.failedCount.toLocaleString()} failed</span>
           ${updatedStr ? `<span class="dm-timestamp">${updatedStr}</span>` : ''}
         </div>
@@ -2276,6 +2289,33 @@ function isEnglishDoc(doc) {
   }
   
   return true; // Accept if no non-EN markers found
+}
+
+// ── isEnglishCtgDoc — English-only check for CTG protocol documents ──
+// CTG docs have no language field; we inspect label + filename for
+// non-English markers using the same pattern set as isEnglishDoc (CTIS).
+function isEnglishCtgDoc(doc) {
+  const text = [(doc.label || ''), (doc.filename || '')].join(' ').toUpperCase();
+
+  const nonEnMarkers = [
+    // Dash-separated language codes
+    ' - DE', ' - FR', ' - ES', ' - IT', ' - PT', ' - NL', ' - PL',
+    ' - SV', ' - DA', ' - FI', ' - NO', ' - CS', ' - HU', ' - RO',
+    ' - BG', ' - HR', ' - SK', ' - SL', ' - LT', ' - LV', ' - ET',
+    ' - RU', ' - TR', ' - GR', ' - EL', ' - JA', ' - ZH', ' - KO',
+    // Parenthesised codes
+    '(DE)', '(FR)', '(ES)', '(IT)', '(PT)', '(NL)', '(PL)', '(FI)',
+    '(BG)', '(HR)', '(SK)', '(SL)', '(RU)', '(TR)', '(GR)', '(EL)',
+    // Underscore codes (common in filenames)
+    '_DE_', '_FR_', '_ES_', '_IT_', '_PT_', '_NL_', '_PL_',
+    '_DE.', '_FR.', '_ES.', '_IT.', '_PT.', '_NL.', '_PL.',
+    // Non-English label words — common protocol label translations
+    'STUDIENPROTOKOLL', 'STUDIEPROTOKOL', 'PROTOCOLO', 'PROTOCOLE',
+    'PROTOCOLLO', 'PROTOKOL', 'PRÜFPLAN', 'PRUEFPLAN',
+    'STUDIEPROTOCOL', 'KLINIK PROTOKOL'
+  ];
+
+  return !nonEnMarkers.some(m => text.includes(m));
 }
 
 function sleep(ms) {

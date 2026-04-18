@@ -311,7 +311,7 @@ app.get('/api/ctg/retrieve/:nct', async (req, res) => {
     const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP')
+      .filter(doc => doc.typeAbbrev === 'Prot')
       .map(doc => ({
         title: doc.label || doc.filename || 'Protocol Document',
         filename: doc.filename || `${nct}_protocol.pdf`,
@@ -361,7 +361,7 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
     const documentSection = data.documentSection || {};
     const largeDocumentModule = documentSection.largeDocumentModule || {};
     const documents = (largeDocumentModule.largeDocs || [])
-      .filter(doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP');
+      .filter(doc => doc.typeAbbrev === 'Prot');
 
     if (documents.length === 0) {
       return res.status(404).json({ error: 'Protocol document not found' });
@@ -450,7 +450,8 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
     const params = new URLSearchParams({
       format: 'json',
       pageSize: Math.min(pageSize, 100),
-      countTotal: true
+      countTotal: true,
+      aggFilters: 'docs:prot'   // only return studies that have a protocol PDF uploaded
     });
 
     if (condition) params.append('query.cond', condition);
@@ -484,8 +485,9 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
       // documentSection is at root level
       const documentSection = study.documentSection || {};
       const largeDocumentModule = documentSection.largeDocumentModule || {};
+      // Only typeAbbrev 'Prot' — strict protocol documents only, no SAP, ICF, or other types
       const largeDocs = (largeDocumentModule.largeDocs || []).filter(
-        doc => doc.typeAbbrev === 'Prot' || doc.typeAbbrev === 'Prot SAP'
+        doc => doc.typeAbbrev === 'Prot'
       );
 
       return {
