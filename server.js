@@ -8,6 +8,7 @@ const { extractUsdmFromPdf } = require('./lib/usdm-extractor');
 const { validateUsdm } = require('./lib/usdm-validator');
 const { usdmToDocx } = require('./lib/usdm-docx');
 const { ExtractionQueue } = require('./lib/usdm-queue');
+const usdmCache = require('./lib/usdm-cache');
 
 // Queue protects Gemini's free-tier 15 RPM and caps concurrent PDF decoding.
 // Raise USDM_CONCURRENCY once on a paid Gemini plan with >=1000 RPM.
@@ -900,6 +901,18 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
 
   const buf = req.file.buffer;
   const originalname = req.file.originalname;
+  const pdfHash = usdmCache.hashBuffer(buf);
+
+  // Cache hit → return instantly without enqueuing. Skip if client sent ?noCache=1.
+  const noCache = String(req.query.noCache || '').trim() === '1';
+  if (!noCache) {
+    const cached = await usdmCache.get(pdfHash).catch(() => null);
+    if (cached && cached.usdm && cached.validation) {
+      send({ type: 'progress', stage: 'cache', message: `⚡ Cache hit — served instantly (${cached.hits} previous hit${cached.hits === 1 ? '' : 's'})` });
+      send({ type: 'complete', usdm: cached.usdm, validation: cached.validation, warnings: cached.warnings || [], toc: cached.toc, fromCache: true });
+      return res.end();
+    }
+  }
 
   // Build the job — queue will invoke run() when a worker slot is free.
   const job = {
@@ -924,6 +937,18 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
       const { usdm, toc } = await extractUsdmFromPdf(buf, { onProgress, sourcePath: originalname });
       send({ type: 'progress', stage: 'validate', message: 'Running USDM v4.0 validation (Ajv + audits)…' });
       const validation = validateUsdm(usdm);
+
+      // Cache successful extractions. Skip if score is low (likely bad) so we
+      // don't lock in a bad result; next upload re-runs.
+      if (validation.score >= 50) {
+        try {
+          await usdmCache.put(pdfHash, { usdm, validation, toc, warnings });
+          send({ type: 'progress', stage: 'cache', message: `💾 Cached for future uploads (hash ${pdfHash.slice(0, 12)}…)` });
+        } catch (e) {
+          send({ type: 'warning', stage: 'cache', message: `Cache write skipped: ${e.message}` });
+        }
+      }
+
       send({ type: 'complete', usdm, validation, warnings, toc });
     }
   };
@@ -950,6 +975,17 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
 // GET /api/usdm/queue — live status of the extraction queue.
 app.get('/api/usdm/queue', (req, res) => {
   res.json(extractQueue.status());
+});
+
+// GET /api/usdm/cache — cache size and TTL info.
+app.get('/api/usdm/cache', async (req, res) => {
+  res.json(await usdmCache.status());
+});
+
+// DELETE /api/usdm/cache/:hash — force re-extraction for a specific PDF.
+app.delete('/api/usdm/cache/:hash', async (req, res) => {
+  await usdmCache.remove(req.params.hash);
+  res.json({ ok: true });
 });
 
 // POST /api/usdm/validate — accept USDM JSON (from this app OR external),

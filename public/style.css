@@ -2618,3 +2618,11 @@ body {
   border-left: 2px solid rgba(139, 92, 246, 0.5);
   font-weight: 600;
 }
+
+/* Cache-hit / cache-write log line */
+.usdm-log-line.cache {
+  color: #34d399;
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.08), transparent);
+  border-left: 2px solid rgba(16, 185, 129, 0.55);
+  font-weight: 600;
+}

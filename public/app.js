@@ -2676,9 +2676,10 @@ function renderLogEvent(evt) {
   if (evt.type === 'queue') {
     appendLogLine(evt.message, 'queue');
   } else if (evt.type === 'progress' || evt.type === 'warning') {
-    appendLogLine(evt.message, evt.type === 'warning' ? 'warn' : null);
+    const cls = evt.stage === 'cache' ? 'cache' : (evt.type === 'warning' ? 'warn' : null);
+    appendLogLine(evt.message, cls);
   } else if (evt.type === 'complete') {
-    appendLogLine('✓ Extraction complete — rendering result…', 'done');
+    appendLogLine(evt.fromCache ? '⚡ Served from cache — rendering result…' : '✓ Extraction complete — rendering result…', 'done');
   } else if (evt.type === 'error') {
     appendLogLine('✗ ' + evt.message, 'err');
   }
