@@ -2413,102 +2413,106 @@ function formatBytes(bytes) {
 }
 
 
+
 // ══════════════════════════════════════════════════════════════
-// USDM Toolkit — Extract / Validate / DOCX tabs
+// USDM Toolkit — Extract (streaming + batch) / Validate / DOCX
 // ══════════════════════════════════════════════════════════════
 
 const usdmState = {
   lastExtractedUsdm: null,
   lastValidatedUsdm: null,
-  _pendingFile: null
+  _pendingFile: null,
+  _pendingBatch: [],
+  batchMode: 'single',       // 'single' | 'batch'
+  batchResults: [],          // [{ filename, status, usdm, validation, error, elapsedMs }]
+  _timerInterval: null,
+  _extractStartMs: 0
 };
 
 function $u(id) { return document.getElementById(id); }
 
 function initUsdmToolkit() {
-  // Mode switching (Download ↔ USDM)
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchAppMode(btn.dataset.mode));
   });
-
-  // USDM sub-tab switching
   document.querySelectorAll('.usdm-tab').forEach(tab => {
     tab.addEventListener('click', () => switchUsdmTab(tab.dataset.usdmTab));
   });
 
-  // Extract pane
-  const extractDZ   = $u('usdmExtractDropzone');
-  const extractFile = $u('usdmExtractFile');
-  const btnExtract  = $u('btnUsdmExtract');
-  if (extractDZ) {
-    extractDZ.addEventListener('click', () => extractFile.click());
-    extractDZ.addEventListener('dragover', (e) => { e.preventDefault(); extractDZ.classList.add('drag-over'); });
-    extractDZ.addEventListener('dragleave', () => extractDZ.classList.remove('drag-over'));
-    extractDZ.addEventListener('drop', (e) => {
-      e.preventDefault(); extractDZ.classList.remove('drag-over');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
-        onUsdmExtractFileChosen(e.dataTransfer.files[0]);
-      }
+  // Single/Batch mode pills
+  document.querySelectorAll('.usdm-mode-pill').forEach(p => {
+    p.addEventListener('click', () => setBatchMode(p.dataset.batch));
+  });
+
+  // Dropzone
+  const dz = $u('usdmExtractDropzone');
+  const fileSingle = $u('usdmExtractFile');
+  const fileBatch  = $u('usdmExtractFileBatch');
+  if (dz) {
+    dz.addEventListener('click', () => {
+      (usdmState.batchMode === 'batch' ? fileBatch : fileSingle).click();
     });
-    extractFile.addEventListener('change', (e) => {
-      if (e.target.files && e.target.files[0]) onUsdmExtractFileChosen(e.target.files[0]);
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault(); dz.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+      if (files.length === 0) return;
+      if (usdmState.batchMode === 'batch') onUsdmBatchFilesChosen(files);
+      else onUsdmExtractFileChosen(files[0]);
     });
   }
-  if (btnExtract) btnExtract.addEventListener('click', runUsdmExtract);
+  if (fileSingle) fileSingle.addEventListener('change', (e) => { if (e.target.files?.[0]) onUsdmExtractFileChosen(e.target.files[0]); });
+  if (fileBatch)  fileBatch.addEventListener('change',  (e) => { if (e.target.files?.length) onUsdmBatchFilesChosen(Array.from(e.target.files)); });
 
-  const btnDl = $u('btnUsdmDownloadJson');
-  if (btnDl) btnDl.addEventListener('click', () => {
-    if (usdmState.lastExtractedUsdm) downloadUsdmJson(usdmState.lastExtractedUsdm);
+  $u('btnUsdmExtract')?.addEventListener('click', () => {
+    if (usdmState.batchMode === 'batch') runUsdmBatchExtract();
+    else runUsdmExtract();
   });
-  const btnExDocx = $u('btnUsdmExtractToDocx');
-  if (btnExDocx) btnExDocx.addEventListener('click', () => {
+
+  // Download / copy / export buttons
+  $u('btnUsdmCopyJson')?.addEventListener('click', copyExtractedJson);
+  $u('btnUsdmExtractToDocx')?.addEventListener('click', () => {
     if (usdmState.lastExtractedUsdm) generateUsdmDocx(usdmState.lastExtractedUsdm);
+    else showToast('info', 'No JSON yet', 'Run an extraction first.');
   });
-  const btnExVal = $u('btnUsdmExtractToValidate');
-  if (btnExVal) btnExVal.addEventListener('click', () => {
-    if (!usdmState.lastExtractedUsdm) return;
+  $u('btnUsdmExtractToValidate')?.addEventListener('click', () => {
+    if (!usdmState.lastExtractedUsdm) { showToast('info', 'No JSON yet', 'Run an extraction first.'); return; }
     $u('usdmValidateTextarea').value = JSON.stringify(usdmState.lastExtractedUsdm, null, 2);
     switchUsdmTab('validate');
   });
 
+  // Batch
+  $u('btnUsdmBatchClear')?.addEventListener('click', clearBatch);
+  $u('btnUsdmBatchDownloadAll')?.addEventListener('click', downloadBatchZip);
+
   // Validate pane
-  const btnValLoad = $u('btnUsdmValidateLoadFile');
-  if (btnValLoad) btnValLoad.addEventListener('click', () => $u('usdmValidateFile').click());
-  const valFile = $u('usdmValidateFile');
-  if (valFile) valFile.addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
+  $u('btnUsdmValidateLoadFile')?.addEventListener('click', () => $u('usdmValidateFile').click());
+  $u('usdmValidateFile')?.addEventListener('change', (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
     const reader = new FileReader();
     reader.onload = () => { $u('usdmValidateTextarea').value = reader.result; };
     reader.readAsText(f);
   });
-  const btnValClear = $u('btnUsdmValidateClear');
-  if (btnValClear) btnValClear.addEventListener('click', () => {
+  $u('btnUsdmValidateClear')?.addEventListener('click', () => {
     $u('usdmValidateTextarea').value = '';
     $u('usdmValidateResult').style.display = 'none';
   });
-  const btnVal = $u('btnUsdmValidate');
-  if (btnVal) btnVal.addEventListener('click', runUsdmValidate);
-  const btnValDocx = $u('btnUsdmValidateToDocx');
-  if (btnValDocx) btnValDocx.addEventListener('click', () => {
+  $u('btnUsdmValidate')?.addEventListener('click', runUsdmValidate);
+  $u('btnUsdmValidateToDocx')?.addEventListener('click', () => {
     if (usdmState.lastValidatedUsdm) generateUsdmDocx(usdmState.lastValidatedUsdm);
   });
 
   // DOCX pane
-  const btnDxLoad = $u('btnUsdmDocxLoadFile');
-  if (btnDxLoad) btnDxLoad.addEventListener('click', () => $u('usdmDocxFile').click());
-  const dxFile = $u('usdmDocxFile');
-  if (dxFile) dxFile.addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
+  $u('btnUsdmDocxLoadFile')?.addEventListener('click', () => $u('usdmDocxFile').click());
+  $u('usdmDocxFile')?.addEventListener('change', (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
     const reader = new FileReader();
     reader.onload = () => { $u('usdmDocxTextarea').value = reader.result; };
     reader.readAsText(f);
   });
-  const btnDxClear = $u('btnUsdmDocxClear');
-  if (btnDxClear) btnDxClear.addEventListener('click', () => { $u('usdmDocxTextarea').value = ''; });
-  const btnDxGen = $u('btnUsdmDocxGenerate');
-  if (btnDxGen) btnDxGen.addEventListener('click', () => {
+  $u('btnUsdmDocxClear')?.addEventListener('click', () => { $u('usdmDocxTextarea').value = ''; });
+  $u('btnUsdmDocxGenerate')?.addEventListener('click', () => {
     try {
       const usdm = JSON.parse($u('usdmDocxTextarea').value);
       generateUsdmDocx(usdm);
@@ -2525,12 +2529,36 @@ function switchAppMode(mode) {
   $u('downloadMode').style.display = mode === 'download' ? '' : 'none';
   $u('usdmMode').style.display     = mode === 'usdm'     ? '' : 'none';
 }
-
 function switchUsdmTab(tab) {
   document.querySelectorAll('.usdm-tab').forEach(t => t.classList.toggle('active', t.dataset.usdmTab === tab));
   $u('usdmPaneExtract').style.display  = tab === 'extract'  ? '' : 'none';
   $u('usdmPaneValidate').style.display = tab === 'validate' ? '' : 'none';
   $u('usdmPaneDocx').style.display     = tab === 'docx'     ? '' : 'none';
+}
+
+function setBatchMode(mode) {
+  usdmState.batchMode = mode;
+  document.querySelectorAll('.usdm-mode-pill').forEach(p => p.classList.toggle('active', p.dataset.batch === mode));
+  const btn = $u('btnUsdmExtract');
+  const headline = $u('usdmDzHeadline');
+  const hint = $u('usdmDzHint');
+  if (mode === 'batch') {
+    headline.textContent = 'Click to choose';
+    $u('usdmDzHeadline').textContent = 'Click to choose multiple';
+    hint.textContent = 'Select/drag several protocol PDFs · processed sequentially · ZIP download at end';
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Start Batch Extraction';
+    $u('usdmBatchArea').style.display = usdmState.batchResults.length ? '' : 'none';
+    $u('usdmExtractResult').style.display = 'none';
+  } else {
+    $u('usdmDzHeadline').textContent = 'Click to choose';
+    hint.textContent = 'Max 50 MB · Processing 100–300 pages takes 30–90 seconds';
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Extract USDM v4.0';
+    $u('usdmBatchArea').style.display = 'none';
+  }
+  $u('usdmExtractChosen').style.display = 'none';
+  btn.disabled = true;
+  usdmState._pendingFile = null;
+  usdmState._pendingBatch = [];
 }
 
 async function checkUsdmHealth() {
@@ -2559,6 +2587,15 @@ function onUsdmExtractFileChosen(file) {
   usdmState._pendingFile = file;
 }
 
+function onUsdmBatchFilesChosen(files) {
+  usdmState._pendingBatch = files;
+  $u('usdmExtractChosen').style.display = '';
+  $u('usdmExtractChosen').innerHTML = '<strong>' + files.length + ' PDF(s) queued</strong> — ' +
+    files.map(f => escapeHtml(f.name)).join(', ');
+  $u('btnUsdmExtract').disabled = false;
+}
+
+// ── Streaming single extraction ───────────────────────────────
 async function runUsdmExtract() {
   const file = usdmState._pendingFile;
   if (!file) return;
@@ -2568,45 +2605,275 @@ async function runUsdmExtract() {
   btn.innerHTML = '<span class="btn-spinner"></span> Extracting…';
 
   $u('usdmExtractResult').style.display = 'none';
-  const stagesEl = $u('usdmExtractStages');
-  $u('usdmExtractProgress').style.display = '';
-  stagesEl.innerHTML = '';
-  const stages = ['Uploading PDF', 'Parsing TOC', 'Extracting sections', 'Validating'];
-  stages.forEach((s, i) => {
-    const el = document.createElement('div');
-    el.className = 'usdm-stage' + (i === 0 ? ' active' : '');
-    el.innerHTML = '<span class="usdm-stage-dot"></span> <span>' + s + '</span>';
-    stagesEl.appendChild(el);
-  });
+  $u('usdmExtractLog').style.display = '';
+  $u('usdmExtractLogBody').innerHTML = '';
+
+  // Start live timer
+  usdmState._extractStartMs = Date.now();
+  updateTimer();
+  usdmState._timerInterval = setInterval(updateTimer, 250);
 
   try {
-    const form = new FormData();
-    form.append('pdf', file);
-    const resp = await fetch(API_BASE + '/api/usdm/extract', { method: 'POST', body: form });
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.error || 'Extraction failed');
-
-    stagesEl.querySelectorAll('.usdm-stage').forEach(s => s.classList.add('done'));
-
-    usdmState.lastExtractedUsdm = body.usdm;
-    renderUsdmResult({
-      targetResult: 'usdmExtractResult',
-      targetScore:  'usdmExtractScore',
-      targetReport: 'usdmExtractReport',
-      validation: body.validation,
-      usdm: body.usdm
-    });
-    $u('usdmExtractJsonPreview').textContent = JSON.stringify(body.usdm, null, 2);
-    showToast('success', 'Extraction Complete', 'Score: ' + body.validation.score + '/100');
+    const result = await streamExtract(file, (event) => renderLogEvent(event));
+    if (!result) return;
+    applyExtractionResult(result);
+    showToast('success', 'Extraction Complete', 'Score: ' + result.validation.score + '/100');
   } catch (err) {
+    appendLogLine('✗ ' + err.message, 'err');
     showToast('error', 'Extraction Failed', err.message);
-    $u('usdmExtractProgress').style.display = 'none';
   } finally {
+    clearInterval(usdmState._timerInterval);
     btn.disabled = false;
     btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Extract USDM v4.0';
   }
 }
 
+function updateTimer() {
+  const el = $u('usdmLogTimer');
+  if (el) el.textContent = ((Date.now() - usdmState._extractStartMs) / 1000).toFixed(1) + 's';
+}
+
+async function streamExtract(file, onEvent) {
+  const form = new FormData();
+  form.append('pdf', file);
+  const resp = await fetch(API_BASE + '/api/usdm/extract', { method: 'POST', body: form });
+
+  if (!resp.body) {
+    // Old fallback — treat as JSON.
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Extraction failed');
+    return body;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let complete = null;
+  let errorMsg = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let evt;
+      try { evt = JSON.parse(line); }
+      catch { continue; }
+      onEvent(evt);
+      if (evt.type === 'complete') complete = evt;
+      if (evt.type === 'error')    errorMsg = evt.message;
+    }
+  }
+  if (errorMsg) throw new Error(errorMsg);
+  if (!complete) throw new Error('Extraction stream ended without completion');
+  return complete;
+}
+
+function renderLogEvent(evt) {
+  if (evt.type === 'progress' || evt.type === 'warning') {
+    appendLogLine(evt.message, evt.type === 'warning' ? 'warn' : null);
+  } else if (evt.type === 'complete') {
+    appendLogLine('✓ Extraction complete — rendering result…', 'done');
+  } else if (evt.type === 'error') {
+    appendLogLine('✗ ' + evt.message, 'err');
+  }
+}
+
+function appendLogLine(message, cls) {
+  const body = $u('usdmExtractLogBody');
+  if (!body) return;
+  const line = document.createElement('div');
+  line.className = 'usdm-log-line' + (cls ? ' ' + cls : '');
+  line.innerHTML = '<span class="usdm-log-time">' + ((Date.now() - usdmState._extractStartMs) / 1000).toFixed(1) + 's</span>' +
+                   '<span>' + escapeHtml(message) + '</span>';
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+
+function applyExtractionResult(result) {
+  usdmState.lastExtractedUsdm = result.usdm;
+  renderUsdmResult({
+    targetResult: 'usdmExtractResult',
+    targetScore:  'usdmExtractScore',
+    targetReport: 'usdmExtractReport',
+    validation: result.validation,
+    usdm: result.usdm
+  });
+
+  const jsonText = JSON.stringify(result.usdm, null, 2);
+  $u('usdmExtractJsonPreview').textContent = jsonText;
+
+  // Populate the download link with a data URL (so <a download> works even if
+  // the user clicks before any script runs)
+  const blob = new Blob([jsonText], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = $u('linkUsdmDownloadJson');
+  if (link) {
+    link.href = url;
+    const filename = computeUsdmFilename(result.usdm) + '.usdm.json';
+    link.setAttribute('download', filename);
+    link.textContent = '⬇ Download ' + filename;
+  }
+}
+
+function computeUsdmFilename(usdm) {
+  try {
+    const ids = usdm?.study?.versions?.[0]?.studyIdentifiers || [];
+    const nct = ids.find(s => s.studyIdentifierScope?.name === 'ClinicalTrials.gov')?.studyIdentifier;
+    if (nct) return nct;
+    const name = usdm?.study?.name || 'USDM_Protocol';
+    return sanitizeFilename(name).slice(0, 80);
+  } catch { return 'USDM_Protocol'; }
+}
+
+async function copyExtractedJson() {
+  if (!usdmState.lastExtractedUsdm) { showToast('info', 'No JSON yet', 'Run an extraction first.'); return; }
+  const text = JSON.stringify(usdmState.lastExtractedUsdm, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('success', 'Copied', 'USDM JSON copied to clipboard');
+  } catch {
+    // Fallback: select the preview pre
+    const pre = $u('usdmExtractJsonPreview');
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+    document.execCommand('copy');
+    sel.removeAllRanges();
+    showToast('success', 'Copied', 'USDM JSON copied to clipboard');
+  }
+}
+
+// ── Batch extraction (sequential) ─────────────────────────────
+async function runUsdmBatchExtract() {
+  const files = usdmState._pendingBatch;
+  if (!files || files.length === 0) return;
+
+  const btn = $u('btnUsdmExtract');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spinner"></span> Processing batch…';
+
+  $u('usdmBatchArea').style.display = '';
+  $u('usdmExtractResult').style.display = 'none';
+  $u('usdmExtractLog').style.display = '';
+  $u('usdmExtractLogBody').innerHTML = '';
+
+  usdmState.batchResults = files.map(f => ({ filename: f.name, status: 'queued', usdm: null, validation: null, error: null, elapsedMs: 0 }));
+  renderBatchList();
+  $u('btnUsdmBatchDownloadAll').disabled = true;
+
+  let done = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    usdmState.batchResults[i].status = 'running';
+    renderBatchList();
+    updateBatchProgress(done, files.length);
+    appendLogLine('▶ [' + (i + 1) + '/' + files.length + '] ' + file.name);
+
+    usdmState._extractStartMs = Date.now();
+    try {
+      const result = await streamExtract(file, (evt) => renderLogEvent(evt));
+      usdmState.batchResults[i].status = 'done';
+      usdmState.batchResults[i].usdm = result.usdm;
+      usdmState.batchResults[i].validation = result.validation;
+      usdmState.batchResults[i].elapsedMs = Date.now() - usdmState._extractStartMs;
+    } catch (err) {
+      usdmState.batchResults[i].status = 'failed';
+      usdmState.batchResults[i].error = err.message;
+      usdmState.batchResults[i].elapsedMs = Date.now() - usdmState._extractStartMs;
+      appendLogLine('✗ ' + file.name + ' — ' + err.message, 'err');
+    }
+    done++;
+    renderBatchList();
+    updateBatchProgress(done, files.length);
+  }
+
+  const okCount = usdmState.batchResults.filter(r => r.status === 'done').length;
+  $u('btnUsdmBatchDownloadAll').disabled = okCount === 0;
+  showToast(okCount ? 'success' : 'error', 'Batch Complete', okCount + ' of ' + files.length + ' extracted');
+  btn.disabled = false;
+  btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Start Batch Extraction';
+}
+
+function updateBatchProgress(done, total) {
+  const el = $u('usdmBatchProgress');
+  if (el) el.textContent = done + ' of ' + total + ' processed';
+  $u('usdmBatchCount').textContent = total + ' file(s)';
+}
+
+function renderBatchList() {
+  const list = $u('usdmBatchList');
+  if (!list) return;
+  list.innerHTML = usdmState.batchResults.map((r, i) => {
+    const score = r.validation ? r.validation.score : null;
+    const scoreCls = score == null ? '' : score >= 85 ? 'good' : score >= 60 ? 'mid' : 'bad';
+    const statusHtml = {
+      queued:  '<span class="usdm-batch-status queued">Queued</span>',
+      running: '<span class="usdm-batch-status running"><span class="usdm-spin"></span>Running</span>',
+      done:    '<span class="usdm-batch-status done">✓ Done</span>',
+      failed:  '<span class="usdm-batch-status failed">✗ Failed</span>'
+    }[r.status];
+    const scoreHtml = score != null ? '<span class="usdm-batch-score ' + scoreCls + '">' + score + '/100</span>' : '';
+    const elapsed = r.elapsedMs ? (r.elapsedMs / 1000).toFixed(1) + 's' : '';
+    const actions = r.status === 'done'
+      ? '<button class="btn-outline btn-sm" data-batch-idx="' + i + '" data-batch-act="dl">⬇ JSON</button> ' +
+        '<button class="btn-outline btn-sm" data-batch-idx="' + i + '" data-batch-act="docx">📄 DOCX</button>'
+      : (r.status === 'failed' ? '<span class="usdm-batch-err" title="' + escapeHtml(r.error || '') + '">' + escapeHtml((r.error || '').slice(0, 60)) + '</span>' : '');
+    return '<div class="usdm-batch-row">' +
+           '<div class="usdm-batch-file">' + escapeHtml(r.filename) + '</div>' +
+           '<div class="usdm-batch-meta">' + statusHtml + scoreHtml + '<span class="usdm-batch-elapsed">' + elapsed + '</span></div>' +
+           '<div class="usdm-batch-actions-row">' + actions + '</div>' +
+           '</div>';
+  }).join('');
+
+  list.querySelectorAll('button[data-batch-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.batchIdx, 10);
+      const act = btn.dataset.batchAct;
+      const r = usdmState.batchResults[idx];
+      if (!r || !r.usdm) return;
+      if (act === 'dl')   downloadUsdmJson(r.usdm);
+      if (act === 'docx') generateUsdmDocx(r.usdm);
+    });
+  });
+}
+
+function clearBatch() {
+  usdmState.batchResults = [];
+  usdmState._pendingBatch = [];
+  $u('usdmBatchList').innerHTML = '';
+  $u('usdmBatchCount').textContent = '0 file(s)';
+  $u('usdmBatchProgress').textContent = 'Ready';
+  $u('btnUsdmBatchDownloadAll').disabled = true;
+  $u('usdmExtractChosen').style.display = 'none';
+  $u('btnUsdmExtract').disabled = true;
+}
+
+async function downloadBatchZip() {
+  if (typeof JSZip === 'undefined') {
+    showToast('error', 'ZIP lib not loaded', 'JSZip failed to load from CDN — try one-by-one download.');
+    return;
+  }
+  const zip = new JSZip();
+  for (const r of usdmState.batchResults) {
+    if (r.status !== 'done' || !r.usdm) continue;
+    const fname = computeUsdmFilename(r.usdm) + '.usdm.json';
+    zip.file(fname, JSON.stringify(r.usdm, null, 2));
+  }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'USDM_Batch_' + new Date().toISOString().slice(0, 10) + '.zip';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast('success', 'ZIP Ready', 'Batch downloaded');
+}
+
+// ── Validate flow (unchanged) ─────────────────────────────────
 async function runUsdmValidate() {
   const text = $u('usdmValidateTextarea').value.trim();
   if (!text) { showToast('error', 'No input', 'Paste or load a USDM JSON.'); return; }
@@ -2622,7 +2889,6 @@ async function runUsdmValidate() {
     });
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.error || 'Validation failed');
-
     usdmState.lastValidatedUsdm = usdm;
     renderUsdmResult({
       targetResult: 'usdmValidateResult',
@@ -2642,7 +2908,8 @@ function renderUsdmResult(opts) {
   const scoreEl = $u(opts.targetScore);
   const scoreCls = validation.score >= 85 ? 'good' : validation.score >= 60 ? 'mid' : 'bad';
   scoreEl.className = 'usdm-score ' + scoreCls;
-  scoreEl.innerHTML = '<span class="usdm-score-num">' + validation.score + '</span><span class="usdm-score-label">/ 100 · ' + (validation.valid ? 'Valid' : 'Invalid') + '</span>';
+  scoreEl.innerHTML = '<span class="usdm-score-num">' + validation.score + '</span>' +
+                      '<span class="usdm-score-label">score<br>' + (validation.valid ? 'VALID' : 'INVALID') + '</span>';
 
   const reportEl = $u(opts.targetReport);
   const soa = (validation.audit && validation.audit.soa) || null;
@@ -2673,10 +2940,7 @@ function renderUsdmResult(opts) {
 }
 
 function downloadUsdmJson(usdm) {
-  const ids = (usdm && usdm.study && usdm.study.versions && usdm.study.versions[0] && usdm.study.versions[0].studyIdentifiers) || [];
-  const nctEntry = ids.find(s => s.studyIdentifierScope && s.studyIdentifierScope.name === 'ClinicalTrials.gov');
-  const nct = nctEntry ? nctEntry.studyIdentifier : null;
-  const name = nct || sanitizeFilename((usdm && usdm.study && usdm.study.name) || 'USDM_Protocol');
+  const name = computeUsdmFilename(usdm);
   const blob = new Blob([JSON.stringify(usdm, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -2704,10 +2968,8 @@ async function generateUsdmDocx(usdm) {
     const filename = match ? match[1] : 'USDM_Protocol.docx';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
     showToast('success', 'DOCX Ready', filename);
   } catch (err) {

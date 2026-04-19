@@ -869,30 +869,51 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
 // USDM v4.0 extraction / validation / DOCX export
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/usdm/extract — multipart PDF → USDM JSON + validation report.
-// Field name: "pdf". Response: { usdm, validation, warnings }.
+// POST /api/usdm/extract — multipart PDF. Response is an NDJSON stream:
+//   {"type":"progress","stage":"toc","message":"..."}
+//   {"type":"warning","stage":"...","message":"..."}
+//   {"type":"complete","usdm":{...},"validation":{...},"toc":{...}}
+//   {"type":"error","message":"..."}
 app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Upload a PDF under field name "pdf".' });
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no'); // prevent proxy buffering on Railway
 
+  const send = (obj) => {
+    try { res.write(JSON.stringify(obj) + '\n'); }
+    catch (e) { /* client disconnected */ }
+  };
+
+  if (!req.file) {
+    send({ type: 'error', message: 'Upload a PDF under field name "pdf".' });
+    return res.end();
+  }
+
+  try {
     const warnings = [];
     const onProgress = (type, payload) => {
       if (type === 'warning') warnings.push(payload);
-      console.log(`[usdm/${payload.stage}] ${payload.message}`);
+      const msg = `[usdm/${payload.stage}] ${payload.message}`;
+      console.log(msg);
+      send({ type, stage: payload.stage, message: payload.message });
     };
+
+    send({ type: 'progress', stage: 'init', message: `Received ${req.file.originalname} (${(req.file.size / 1024).toFixed(0)} KB)` });
 
     const { usdm, toc } = await extractUsdmFromPdf(req.file.buffer, {
       onProgress,
       sourcePath: req.file.originalname
     });
 
+    send({ type: 'progress', stage: 'validate', message: 'Running USDM v4.0 validation (Ajv + audits)…' });
     const validation = validateUsdm(usdm);
 
-    res.json({ usdm, validation, warnings, toc });
+    send({ type: 'complete', usdm, validation, warnings, toc });
   } catch (err) {
     console.error('USDM extract error:', err);
-    const status = err.code === 'MISSING_API_KEY' ? 400 : 500;
-    res.status(status).json({ error: err.message, code: err.code || 'EXTRACT_FAILED' });
+    send({ type: 'error', message: err.message, code: err.code || 'EXTRACT_FAILED' });
+  } finally {
+    res.end();
   }
 });
 

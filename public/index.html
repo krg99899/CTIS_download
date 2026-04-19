@@ -513,15 +513,21 @@
 
       <!-- Extract Pane -->
       <section class="usdm-pane glass-card" id="usdmPaneExtract">
-        <h2 class="usdm-pane-title">Extract CDISC USDM v4.0 from a Protocol PDF</h2>
-        <p class="usdm-subtitle">Upload a protocol PDF. The extractor parses the TOC, slices the relevant sections (synopsis, objectives/endpoints, eligibility, arms, SoA, estimands — including appendices), and returns a validated USDM v4.0 JSON.</p>
+        <h2 class="usdm-pane-title">Extract CDISC USDM v4.0 from Protocol PDF(s)</h2>
+        <p class="usdm-subtitle">Upload one PDF for instant live extraction, or switch to Batch mode to process multiple protocols in sequence. The extractor parses the TOC, slices relevant sections (synopsis, objectives/endpoints, eligibility, arms, SoA + footnotes — including appendices), and returns validated USDM v4.0 JSON with real-time progress.</p>
+
+        <div class="usdm-mode-switch">
+          <button class="usdm-mode-pill active" data-batch="single" id="usdmModeSingle">Single PDF</button>
+          <button class="usdm-mode-pill" data-batch="batch" id="usdmModeBatch">Batch (multiple)</button>
+        </div>
 
         <div class="usdm-dropzone" id="usdmExtractDropzone">
           <input type="file" id="usdmExtractFile" accept="application/pdf" hidden>
+          <input type="file" id="usdmExtractFileBatch" accept="application/pdf" multiple hidden>
           <div class="usdm-dropzone-body">
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="opacity:.4"><rect x="10" y="6" width="20" height="28" rx="3" stroke="currentColor" stroke-width="2"/><path d="M15 15h10M15 20h10M15 25h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-            <p><strong>Click to choose</strong> or drag a protocol PDF here</p>
-            <p class="usdm-dz-hint">Max 50 MB · Processing 100–300 pages takes 30–90 seconds</p>
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="opacity:.55"><rect x="10" y="6" width="20" height="28" rx="3" stroke="currentColor" stroke-width="2"/><path d="M15 15h10M15 20h10M15 25h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <p><strong id="usdmDzHeadline">Click to choose</strong> or drag a protocol PDF here</p>
+            <p class="usdm-dz-hint" id="usdmDzHint">Max 50 MB · Processing 100–300 pages takes 30–90 seconds</p>
           </div>
           <div class="usdm-file-chosen" id="usdmExtractChosen" style="display:none"></div>
         </div>
@@ -535,20 +541,44 @@
           <div class="usdm-progress-stages" id="usdmExtractStages"></div>
         </div>
 
+        <div class="usdm-progress-log" id="usdmExtractLog" style="display:none">
+          <div class="usdm-log-header">
+            <span>📜 Live extraction log</span>
+            <span id="usdmLogTimer" class="usdm-log-timer">0s</span>
+          </div>
+          <div class="usdm-log-body" id="usdmExtractLogBody"></div>
+        </div>
+
         <div class="usdm-result" id="usdmExtractResult" style="display:none">
           <div class="usdm-result-header">
             <div class="usdm-score" id="usdmExtractScore"></div>
             <div class="usdm-result-actions">
-              <button class="btn-outline btn-sm" id="btnUsdmDownloadJson">⬇ Download JSON</button>
+              <a class="btn-primary btn-sm" id="linkUsdmDownloadJson" download="USDM_Protocol.json" href="#">⬇ Download JSON</a>
+              <button class="btn-outline btn-sm" id="btnUsdmCopyJson">📋 Copy JSON</button>
               <button class="btn-outline btn-sm" id="btnUsdmExtractToDocx">📄 Export DOCX</button>
               <button class="btn-outline btn-sm" id="btnUsdmExtractToValidate">→ Send to Validator</button>
             </div>
           </div>
           <div class="usdm-validation-report" id="usdmExtractReport"></div>
-          <details class="usdm-json-preview">
-            <summary>Preview USDM JSON</summary>
+          <details class="usdm-json-preview" open>
+            <summary>USDM JSON output (always copyable / downloadable)</summary>
             <pre id="usdmExtractJsonPreview"></pre>
           </details>
+        </div>
+
+        <!-- Batch mode: per-file cards + download-all -->
+        <div class="usdm-batch" id="usdmBatchArea" style="display:none">
+          <div class="usdm-batch-header">
+            <div>
+              <strong id="usdmBatchCount">0 file(s)</strong>
+              <span class="usdm-dz-hint" id="usdmBatchProgress">Ready</span>
+            </div>
+            <div class="usdm-batch-actions">
+              <button class="btn-outline btn-sm" id="btnUsdmBatchDownloadAll" disabled>⬇ Download all (ZIP)</button>
+              <button class="btn-outline btn-sm" id="btnUsdmBatchClear">Clear</button>
+            </div>
+          </div>
+          <div class="usdm-batch-list" id="usdmBatchList"></div>
         </div>
       </section>
 
@@ -602,6 +632,9 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>
   </main>
+
+  <!-- JSZip for batch ZIP download (tiny, loaded async) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" async></script>
 
   <script src="app.js"></script>
 </body>
