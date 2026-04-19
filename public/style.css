@@ -2610,3 +2610,11 @@ body {
   .usdm-batch-row { grid-template-columns: 1fr; gap: 6px; }
   .usdm-batch-actions-row { justify-content: flex-start; }
 }
+
+/* Queue-state log line */
+.usdm-log-line.queue {
+  color: #a5b4fc;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), transparent);
+  border-left: 2px solid rgba(139, 92, 246, 0.5);
+  font-weight: 600;
+}

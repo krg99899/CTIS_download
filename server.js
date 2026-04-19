@@ -7,6 +7,13 @@ const multer = require('multer');
 const { extractUsdmFromPdf } = require('./lib/usdm-extractor');
 const { validateUsdm } = require('./lib/usdm-validator');
 const { usdmToDocx } = require('./lib/usdm-docx');
+const { ExtractionQueue } = require('./lib/usdm-queue');
+
+// Queue protects Gemini's free-tier 15 RPM and caps concurrent PDF decoding.
+// Raise USDM_CONCURRENCY once on a paid Gemini plan with >=1000 RPM.
+const extractQueue = new ExtractionQueue(
+  parseInt(process.env.USDM_CONCURRENCY || '1', 10)
+);
 
 const app = express();
 const PORT = 3900;
@@ -869,19 +876,21 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
 // USDM v4.0 extraction / validation / DOCX export
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/usdm/extract — multipart PDF. Response is an NDJSON stream:
-//   {"type":"progress","stage":"toc","message":"..."}
+// POST /api/usdm/extract — multipart PDF. Response is an NDJSON stream.
+// Events (one JSON object per line):
+//   {"type":"queue","position":N,"total":T,"message":"..."}   — waiting in queue
+//   {"type":"progress","stage":"...","message":"..."}
 //   {"type":"warning","stage":"...","message":"..."}
 //   {"type":"complete","usdm":{...},"validation":{...},"toc":{...}}
 //   {"type":"error","message":"..."}
 app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('X-Accel-Buffering', 'no'); // prevent proxy buffering on Railway
+  res.setHeader('X-Accel-Buffering', 'no');
 
   const send = (obj) => {
     try { res.write(JSON.stringify(obj) + '\n'); }
-    catch (e) { /* client disconnected */ }
+    catch { /* client disconnected */ }
   };
 
   if (!req.file) {
@@ -889,32 +898,58 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
     return res.end();
   }
 
+  const buf = req.file.buffer;
+  const originalname = req.file.originalname;
+
+  // Build the job — queue will invoke run() when a worker slot is free.
+  const job = {
+    onQueueUpdate: (position, total) => {
+      send({
+        type: 'queue',
+        position, total,
+        message: `⌛ Queued — position ${position} of ${total} (concurrency cap: ${extractQueue.concurrency})`
+      });
+    },
+    onStart: () => {
+      send({ type: 'progress', stage: 'init', message: `▶ Started — ${originalname} (${(buf.length / 1024).toFixed(0)} KB)` });
+    },
+    run: async () => {
+      if (job.cancelled) throw Object.assign(new Error('Cancelled'), { code: 'CANCELLED' });
+      const warnings = [];
+      const onProgress = (type, payload) => {
+        if (type === 'warning') warnings.push(payload);
+        console.log(`[usdm/${payload.stage}] ${payload.message}`);
+        send({ type, stage: payload.stage, message: payload.message });
+      };
+      const { usdm, toc } = await extractUsdmFromPdf(buf, { onProgress, sourcePath: originalname });
+      send({ type: 'progress', stage: 'validate', message: 'Running USDM v4.0 validation (Ajv + audits)…' });
+      const validation = validateUsdm(usdm);
+      send({ type: 'complete', usdm, validation, warnings, toc });
+    }
+  };
+
+  // Abort if client disconnects while queued or mid-run.
+  req.on('close', () => { extractQueue.cancel(job); });
+
   try {
-    const warnings = [];
-    const onProgress = (type, payload) => {
-      if (type === 'warning') warnings.push(payload);
-      const msg = `[usdm/${payload.stage}] ${payload.message}`;
-      console.log(msg);
-      send({ type, stage: payload.stage, message: payload.message });
-    };
-
-    send({ type: 'progress', stage: 'init', message: `Received ${req.file.originalname} (${(req.file.size / 1024).toFixed(0)} KB)` });
-
-    const { usdm, toc } = await extractUsdmFromPdf(req.file.buffer, {
-      onProgress,
-      sourcePath: req.file.originalname
-    });
-
-    send({ type: 'progress', stage: 'validate', message: 'Running USDM v4.0 validation (Ajv + audits)…' });
-    const validation = validateUsdm(usdm);
-
-    send({ type: 'complete', usdm, validation, warnings, toc });
+    await extractQueue.enqueue(job);
   } catch (err) {
-    console.error('USDM extract error:', err);
-    send({ type: 'error', message: err.message, code: err.code || 'EXTRACT_FAILED' });
+    if (err?.code === 'CANCELLED') {
+      // Client already gone — just end.
+    } else if (err?.code === 'MISSING_API_KEY') {
+      send({ type: 'error', message: err.message, code: err.code });
+    } else {
+      console.error('USDM extract error:', err);
+      send({ type: 'error', message: err.message || 'Extraction failed', code: err.code || 'EXTRACT_FAILED' });
+    }
   } finally {
-    res.end();
+    try { res.end(); } catch {}
   }
+});
+
+// GET /api/usdm/queue — live status of the extraction queue.
+app.get('/api/usdm/queue', (req, res) => {
+  res.json(extractQueue.status());
 });
 
 // POST /api/usdm/validate — accept USDM JSON (from this app OR external),

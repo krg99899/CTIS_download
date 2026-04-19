@@ -2673,7 +2673,9 @@ async function streamExtract(file, onEvent) {
 }
 
 function renderLogEvent(evt) {
-  if (evt.type === 'progress' || evt.type === 'warning') {
+  if (evt.type === 'queue') {
+    appendLogLine(evt.message, 'queue');
+  } else if (evt.type === 'progress' || evt.type === 'warning') {
     appendLogLine(evt.message, evt.type === 'warning' ? 'warn' : null);
   } else if (evt.type === 'complete') {
     appendLogLine('✓ Extraction complete — rendering result…', 'done');
