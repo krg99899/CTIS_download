@@ -930,6 +930,11 @@ app.post('/api/usdm/to-docx', async (req, res) => {
   }
 });
 
+// GET /api/ping — Railway healthcheck.
+app.get('/api/ping', (req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+});
+
 // GET /api/usdm/health — cheap client-side check for GEMINI_API_KEY presence.
 app.get('/api/usdm/health', (req, res) => {
   res.json({
