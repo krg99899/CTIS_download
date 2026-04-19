@@ -55,6 +55,22 @@
 
   <!-- Main Content -->
   <main id="app-main">
+    <!-- App Mode Nav: Download vs USDM Toolkit -->
+    <nav class="app-mode-nav" id="appModeNav">
+      <button class="mode-btn active" data-mode="download" id="modeDownload">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download Protocols
+      </button>
+      <button class="mode-btn" data-mode="usdm" id="modeUsdm">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 3h7l3 3v7H3V3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 3v3h3M5 9h6M5 11h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        USDM Toolkit
+      </button>
+    </nav>
+
+    <!-- ═════════════════════════════════════════════════
+         DOWNLOAD MODE  — existing search / bulk / download UI
+         ═════════════════════════════════════════════════ -->
+    <div id="downloadMode">
     <!-- Source Tabs -->
     <div class="source-tabs" id="sourceTabs">
       <button class="tab-btn active" data-source="ctis" id="tabCTIS">
@@ -469,6 +485,119 @@
         </div>
       </div>
     </div>
+    </div><!-- /#downloadMode -->
+
+    <!-- ═════════════════════════════════════════════════
+         USDM MODE — Extract / Validate / Export DOCX
+         ═════════════════════════════════════════════════ -->
+    <div id="usdmMode" style="display:none">
+      <div class="usdm-tabs">
+        <button class="usdm-tab active" data-usdm-tab="extract" id="usdmTabExtract">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 2h5l3 3v7H3V2z" stroke="currentColor" stroke-width="1.4"/><path d="M5 8h4M5 10h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          PDF → USDM
+        </button>
+        <button class="usdm-tab" data-usdm-tab="validate" id="usdmTabValidate">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Validate JSON
+        </button>
+        <button class="usdm-tab" data-usdm-tab="docx" id="usdmTabDocx">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M4 5h6M4 8h6M4 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          JSON → DOCX
+        </button>
+      </div>
+
+      <div class="usdm-health" id="usdmHealth">
+        <span id="usdmHealthDot" class="usdm-health-dot"></span>
+        <span id="usdmHealthText">Checking Gemini configuration…</span>
+      </div>
+
+      <!-- Extract Pane -->
+      <section class="usdm-pane glass-card" id="usdmPaneExtract">
+        <h2 class="usdm-pane-title">Extract CDISC USDM v4.0 from a Protocol PDF</h2>
+        <p class="usdm-subtitle">Upload a protocol PDF. The extractor parses the TOC, slices the relevant sections (synopsis, objectives/endpoints, eligibility, arms, SoA, estimands — including appendices), and returns a validated USDM v4.0 JSON.</p>
+
+        <div class="usdm-dropzone" id="usdmExtractDropzone">
+          <input type="file" id="usdmExtractFile" accept="application/pdf" hidden>
+          <div class="usdm-dropzone-body">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="opacity:.4"><rect x="10" y="6" width="20" height="28" rx="3" stroke="currentColor" stroke-width="2"/><path d="M15 15h10M15 20h10M15 25h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <p><strong>Click to choose</strong> or drag a protocol PDF here</p>
+            <p class="usdm-dz-hint">Max 50 MB · Processing 100–300 pages takes 30–90 seconds</p>
+          </div>
+          <div class="usdm-file-chosen" id="usdmExtractChosen" style="display:none"></div>
+        </div>
+
+        <button class="btn-primary" id="btnUsdmExtract" disabled>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Extract USDM v4.0
+        </button>
+
+        <div class="usdm-progress" id="usdmExtractProgress" style="display:none">
+          <div class="usdm-progress-stages" id="usdmExtractStages"></div>
+        </div>
+
+        <div class="usdm-result" id="usdmExtractResult" style="display:none">
+          <div class="usdm-result-header">
+            <div class="usdm-score" id="usdmExtractScore"></div>
+            <div class="usdm-result-actions">
+              <button class="btn-outline btn-sm" id="btnUsdmDownloadJson">⬇ Download JSON</button>
+              <button class="btn-outline btn-sm" id="btnUsdmExtractToDocx">📄 Export DOCX</button>
+              <button class="btn-outline btn-sm" id="btnUsdmExtractToValidate">→ Send to Validator</button>
+            </div>
+          </div>
+          <div class="usdm-validation-report" id="usdmExtractReport"></div>
+          <details class="usdm-json-preview">
+            <summary>Preview USDM JSON</summary>
+            <pre id="usdmExtractJsonPreview"></pre>
+          </details>
+        </div>
+      </section>
+
+      <!-- Validate Pane -->
+      <section class="usdm-pane glass-card" id="usdmPaneValidate" style="display:none">
+        <h2 class="usdm-pane-title">Validate USDM v4.0 JSON</h2>
+        <p class="usdm-subtitle">Paste or upload USDM JSON — from this app or external. The validator runs Ajv structural check + audits for orphan footnotes, SoA grid completeness, CDISC CT code validity, and missing required fields.</p>
+
+        <div class="usdm-validate-input">
+          <input type="file" id="usdmValidateFile" accept="application/json" hidden>
+          <button class="btn-outline btn-sm" id="btnUsdmValidateLoadFile">📁 Load JSON file</button>
+          <button class="btn-outline btn-sm" id="btnUsdmValidateClear">Clear</button>
+        </div>
+        <textarea id="usdmValidateTextarea" class="usdm-textarea" placeholder='Paste USDM v4.0 JSON here…'></textarea>
+
+        <button class="btn-primary" id="btnUsdmValidate">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Validate
+        </button>
+
+        <div class="usdm-result" id="usdmValidateResult" style="display:none">
+          <div class="usdm-result-header">
+            <div class="usdm-score" id="usdmValidateScore"></div>
+            <div class="usdm-result-actions">
+              <button class="btn-outline btn-sm" id="btnUsdmValidateToDocx">📄 Export DOCX</button>
+            </div>
+          </div>
+          <div class="usdm-validation-report" id="usdmValidateReport"></div>
+        </div>
+      </section>
+
+      <!-- DOCX Pane -->
+      <section class="usdm-pane glass-card" id="usdmPaneDocx" style="display:none">
+        <h2 class="usdm-pane-title">Export USDM JSON → Word Document</h2>
+        <p class="usdm-subtitle">Generate a structured .docx of the USDM payload — title page, synopsis, objectives/endpoints (nested), arms &amp; interventions, eligibility, Schedule of Activities table(s) with linked footnotes, estimands.</p>
+
+        <div class="usdm-validate-input">
+          <input type="file" id="usdmDocxFile" accept="application/json" hidden>
+          <button class="btn-outline btn-sm" id="btnUsdmDocxLoadFile">📁 Load USDM JSON</button>
+          <button class="btn-outline btn-sm" id="btnUsdmDocxClear">Clear</button>
+        </div>
+        <textarea id="usdmDocxTextarea" class="usdm-textarea" placeholder='Paste USDM v4.0 JSON here, or load from file…'></textarea>
+
+        <button class="btn-primary" id="btnUsdmDocxGenerate">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Generate &amp; Download DOCX
+        </button>
+      </section>
+    </div><!-- /#usdmMode -->
 
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>

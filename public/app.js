@@ -345,8 +345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadDownloadsInfo();
   await openDmDb();
   renderDownloadManager();
-  // Don't auto-run search on page load - let user start from top
-  // performSearch();
+  initUsdmToolkit();
 });
 
 function bindEvents() {
@@ -2411,4 +2410,307 @@ function formatBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// USDM Toolkit — Extract / Validate / DOCX tabs
+// ══════════════════════════════════════════════════════════════
+
+const usdmState = {
+  lastExtractedUsdm: null,
+  lastValidatedUsdm: null,
+  _pendingFile: null
+};
+
+function $u(id) { return document.getElementById(id); }
+
+function initUsdmToolkit() {
+  // Mode switching (Download ↔ USDM)
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchAppMode(btn.dataset.mode));
+  });
+
+  // USDM sub-tab switching
+  document.querySelectorAll('.usdm-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchUsdmTab(tab.dataset.usdmTab));
+  });
+
+  // Extract pane
+  const extractDZ   = $u('usdmExtractDropzone');
+  const extractFile = $u('usdmExtractFile');
+  const btnExtract  = $u('btnUsdmExtract');
+  if (extractDZ) {
+    extractDZ.addEventListener('click', () => extractFile.click());
+    extractDZ.addEventListener('dragover', (e) => { e.preventDefault(); extractDZ.classList.add('drag-over'); });
+    extractDZ.addEventListener('dragleave', () => extractDZ.classList.remove('drag-over'));
+    extractDZ.addEventListener('drop', (e) => {
+      e.preventDefault(); extractDZ.classList.remove('drag-over');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+        onUsdmExtractFileChosen(e.dataTransfer.files[0]);
+      }
+    });
+    extractFile.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) onUsdmExtractFileChosen(e.target.files[0]);
+    });
+  }
+  if (btnExtract) btnExtract.addEventListener('click', runUsdmExtract);
+
+  const btnDl = $u('btnUsdmDownloadJson');
+  if (btnDl) btnDl.addEventListener('click', () => {
+    if (usdmState.lastExtractedUsdm) downloadUsdmJson(usdmState.lastExtractedUsdm);
+  });
+  const btnExDocx = $u('btnUsdmExtractToDocx');
+  if (btnExDocx) btnExDocx.addEventListener('click', () => {
+    if (usdmState.lastExtractedUsdm) generateUsdmDocx(usdmState.lastExtractedUsdm);
+  });
+  const btnExVal = $u('btnUsdmExtractToValidate');
+  if (btnExVal) btnExVal.addEventListener('click', () => {
+    if (!usdmState.lastExtractedUsdm) return;
+    $u('usdmValidateTextarea').value = JSON.stringify(usdmState.lastExtractedUsdm, null, 2);
+    switchUsdmTab('validate');
+  });
+
+  // Validate pane
+  const btnValLoad = $u('btnUsdmValidateLoadFile');
+  if (btnValLoad) btnValLoad.addEventListener('click', () => $u('usdmValidateFile').click());
+  const valFile = $u('usdmValidateFile');
+  if (valFile) valFile.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => { $u('usdmValidateTextarea').value = reader.result; };
+    reader.readAsText(f);
+  });
+  const btnValClear = $u('btnUsdmValidateClear');
+  if (btnValClear) btnValClear.addEventListener('click', () => {
+    $u('usdmValidateTextarea').value = '';
+    $u('usdmValidateResult').style.display = 'none';
+  });
+  const btnVal = $u('btnUsdmValidate');
+  if (btnVal) btnVal.addEventListener('click', runUsdmValidate);
+  const btnValDocx = $u('btnUsdmValidateToDocx');
+  if (btnValDocx) btnValDocx.addEventListener('click', () => {
+    if (usdmState.lastValidatedUsdm) generateUsdmDocx(usdmState.lastValidatedUsdm);
+  });
+
+  // DOCX pane
+  const btnDxLoad = $u('btnUsdmDocxLoadFile');
+  if (btnDxLoad) btnDxLoad.addEventListener('click', () => $u('usdmDocxFile').click());
+  const dxFile = $u('usdmDocxFile');
+  if (dxFile) dxFile.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => { $u('usdmDocxTextarea').value = reader.result; };
+    reader.readAsText(f);
+  });
+  const btnDxClear = $u('btnUsdmDocxClear');
+  if (btnDxClear) btnDxClear.addEventListener('click', () => { $u('usdmDocxTextarea').value = ''; });
+  const btnDxGen = $u('btnUsdmDocxGenerate');
+  if (btnDxGen) btnDxGen.addEventListener('click', () => {
+    try {
+      const usdm = JSON.parse($u('usdmDocxTextarea').value);
+      generateUsdmDocx(usdm);
+    } catch (err) {
+      showToast('error', 'Invalid JSON', err.message);
+    }
+  });
+
+  checkUsdmHealth();
+}
+
+function switchAppMode(mode) {
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $u('downloadMode').style.display = mode === 'download' ? '' : 'none';
+  $u('usdmMode').style.display     = mode === 'usdm'     ? '' : 'none';
+}
+
+function switchUsdmTab(tab) {
+  document.querySelectorAll('.usdm-tab').forEach(t => t.classList.toggle('active', t.dataset.usdmTab === tab));
+  $u('usdmPaneExtract').style.display  = tab === 'extract'  ? '' : 'none';
+  $u('usdmPaneValidate').style.display = tab === 'validate' ? '' : 'none';
+  $u('usdmPaneDocx').style.display     = tab === 'docx'     ? '' : 'none';
+}
+
+async function checkUsdmHealth() {
+  try {
+    const resp = await fetch(API_BASE + '/api/usdm/health');
+    const data = await resp.json();
+    const dot  = $u('usdmHealthDot');
+    const text = $u('usdmHealthText');
+    if (data.geminiConfigured) {
+      dot.className = 'usdm-health-dot ok';
+      text.textContent = 'Gemini API ready · model: ' + data.model;
+    } else {
+      dot.className = 'usdm-health-dot err';
+      text.innerHTML = 'GEMINI_API_KEY not set — extraction will fail. <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get a free key</a> and add to your environment.';
+    }
+  } catch (err) {
+    $u('usdmHealthText').textContent = 'Unable to reach /api/usdm/health';
+  }
+}
+
+function onUsdmExtractFileChosen(file) {
+  const chosen = $u('usdmExtractChosen');
+  chosen.style.display = '';
+  chosen.innerHTML = '<strong>' + escapeHtml(file.name) + '</strong> <span class="usdm-dz-hint">(' + formatBytes(file.size) + ')</span>';
+  $u('btnUsdmExtract').disabled = false;
+  usdmState._pendingFile = file;
+}
+
+async function runUsdmExtract() {
+  const file = usdmState._pendingFile;
+  if (!file) return;
+
+  const btn = $u('btnUsdmExtract');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spinner"></span> Extracting…';
+
+  $u('usdmExtractResult').style.display = 'none';
+  const stagesEl = $u('usdmExtractStages');
+  $u('usdmExtractProgress').style.display = '';
+  stagesEl.innerHTML = '';
+  const stages = ['Uploading PDF', 'Parsing TOC', 'Extracting sections', 'Validating'];
+  stages.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'usdm-stage' + (i === 0 ? ' active' : '');
+    el.innerHTML = '<span class="usdm-stage-dot"></span> <span>' + s + '</span>';
+    stagesEl.appendChild(el);
+  });
+
+  try {
+    const form = new FormData();
+    form.append('pdf', file);
+    const resp = await fetch(API_BASE + '/api/usdm/extract', { method: 'POST', body: form });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Extraction failed');
+
+    stagesEl.querySelectorAll('.usdm-stage').forEach(s => s.classList.add('done'));
+
+    usdmState.lastExtractedUsdm = body.usdm;
+    renderUsdmResult({
+      targetResult: 'usdmExtractResult',
+      targetScore:  'usdmExtractScore',
+      targetReport: 'usdmExtractReport',
+      validation: body.validation,
+      usdm: body.usdm
+    });
+    $u('usdmExtractJsonPreview').textContent = JSON.stringify(body.usdm, null, 2);
+    showToast('success', 'Extraction Complete', 'Score: ' + body.validation.score + '/100');
+  } catch (err) {
+    showToast('error', 'Extraction Failed', err.message);
+    $u('usdmExtractProgress').style.display = 'none';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Extract USDM v4.0';
+  }
+}
+
+async function runUsdmValidate() {
+  const text = $u('usdmValidateTextarea').value.trim();
+  if (!text) { showToast('error', 'No input', 'Paste or load a USDM JSON.'); return; }
+  let usdm;
+  try { usdm = JSON.parse(text); }
+  catch (err) { showToast('error', 'Invalid JSON', err.message); return; }
+
+  try {
+    const resp = await fetch(API_BASE + '/api/usdm/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usdm })
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Validation failed');
+
+    usdmState.lastValidatedUsdm = usdm;
+    renderUsdmResult({
+      targetResult: 'usdmValidateResult',
+      targetScore:  'usdmValidateScore',
+      targetReport: 'usdmValidateReport',
+      validation: body.validation,
+      usdm
+    });
+  } catch (err) {
+    showToast('error', 'Validation Error', err.message);
+  }
+}
+
+function renderUsdmResult(opts) {
+  const validation = opts.validation;
+  $u(opts.targetResult).style.display = '';
+  const scoreEl = $u(opts.targetScore);
+  const scoreCls = validation.score >= 85 ? 'good' : validation.score >= 60 ? 'mid' : 'bad';
+  scoreEl.className = 'usdm-score ' + scoreCls;
+  scoreEl.innerHTML = '<span class="usdm-score-num">' + validation.score + '</span><span class="usdm-score-label">/ 100 · ' + (validation.valid ? 'Valid' : 'Invalid') + '</span>';
+
+  const reportEl = $u(opts.targetReport);
+  const soa = (validation.audit && validation.audit.soa) || null;
+  const coverage = soa && soa.totalExpectedCells > 0
+    ? ((soa.totalActualCells / soa.totalExpectedCells) * 100).toFixed(1) + '%'
+    : '—';
+
+  const summary = ''
+    + '<div class="usdm-audit-grid">'
+    + '  <div><span class="label">Schema</span><span class="val">' + (validation.audit.schemaValid ? '✓ Valid' : '✕ Invalid') + '</span></div>'
+    + '  <div><span class="label">Errors</span><span class="val ' + (validation.errors.length ? 'bad' : 'good') + '">' + validation.errors.length + '</span></div>'
+    + '  <div><span class="label">Warnings</span><span class="val ' + (validation.warnings.length > 5 ? 'mid' : 'good') + '">' + validation.warnings.length + '</span></div>'
+    + '  <div><span class="label">CDISC code issues</span><span class="val">' + validation.audit.cdiscCodeViolations + '</span></div>'
+    + '  <div><span class="label">SoA timelines</span><span class="val">' + ((soa && soa.timelineCount) || 0) + '</span></div>'
+    + '  <div><span class="label">SoA grid coverage</span><span class="val">' + coverage + '</span></div>'
+    + '  <div><span class="label">Orphan footnotes</span><span class="val">' + ((soa && soa.orphanFootnoteRefs) || 0) + '</span></div>'
+    + '  <div><span class="label">Unused footnotes</span><span class="val">' + ((soa && soa.unusedFootnoteDefs) || 0) + '</span></div>'
+    + '</div>';
+
+  function listSection(title, items, cls) {
+    if (!items || items.length === 0) return '';
+    const top = items.slice(0, 30).map(e => '<li><code>' + escapeHtml(e.path || '') + '</code> ' + escapeHtml(e.message) + '</li>').join('');
+    const more = items.length > 30 ? '<p class="usdm-more">… ' + (items.length - 30) + ' more</p>' : '';
+    return '<div class="usdm-msg-block ' + cls + '"><h4>' + title + ' (' + items.length + ')</h4><ul>' + top + '</ul>' + more + '</div>';
+  }
+
+  reportEl.innerHTML = summary + listSection('Errors', validation.errors, 'err') + listSection('Warnings', validation.warnings, 'warn');
+}
+
+function downloadUsdmJson(usdm) {
+  const ids = (usdm && usdm.study && usdm.study.versions && usdm.study.versions[0] && usdm.study.versions[0].studyIdentifiers) || [];
+  const nctEntry = ids.find(s => s.studyIdentifierScope && s.studyIdentifierScope.name === 'ClinicalTrials.gov');
+  const nct = nctEntry ? nctEntry.studyIdentifier : null;
+  const name = nct || sanitizeFilename((usdm && usdm.study && usdm.study.name) || 'USDM_Protocol');
+  const blob = new Blob([JSON.stringify(usdm, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = name + '.usdm.json';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+async function generateUsdmDocx(usdm) {
+  try {
+    const resp = await fetch(API_BASE + '/api/usdm/to-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usdm })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: 'DOCX generation failed' }));
+      throw new Error(err.error || 'DOCX generation failed');
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : 'USDM_Protocol.docx';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast('success', 'DOCX Ready', filename);
+  } catch (err) {
+    showToast('error', 'DOCX Error', err.message);
+  }
 }

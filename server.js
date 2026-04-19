@@ -2,14 +2,25 @@ const express = require('express');
 const fetch = require('node-fetch');
 const cors = require('cors');
 const path = require('path');
+const multer = require('multer');
+
+const { extractUsdmFromPdf } = require('./lib/usdm-extractor');
+const { validateUsdm } = require('./lib/usdm-validator');
+const { usdmToDocx } = require('./lib/usdm-docx');
 
 const app = express();
 const PORT = 3900;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));   // USDM JSON payloads can be large
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Multer — in-memory PDF upload, 50MB cap (Gemini accepts ≤50MB inline).
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
 
 // Base CTIS API URL
 const CTIS_API = 'https://euclinicaltrials.eu/ctis-public-api';
@@ -852,6 +863,79 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
     console.error('CTG bulk search error:', err.message);
     res.status(500).json({ error: 'Failed to bulk search ClinicalTrials.gov', details: err.message });
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+// USDM v4.0 extraction / validation / DOCX export
+// ══════════════════════════════════════════════════════════════
+
+// POST /api/usdm/extract — multipart PDF → USDM JSON + validation report.
+// Field name: "pdf". Response: { usdm, validation, warnings }.
+app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Upload a PDF under field name "pdf".' });
+
+    const warnings = [];
+    const onProgress = (type, payload) => {
+      if (type === 'warning') warnings.push(payload);
+      console.log(`[usdm/${payload.stage}] ${payload.message}`);
+    };
+
+    const { usdm, toc } = await extractUsdmFromPdf(req.file.buffer, {
+      onProgress,
+      sourcePath: req.file.originalname
+    });
+
+    const validation = validateUsdm(usdm);
+
+    res.json({ usdm, validation, warnings, toc });
+  } catch (err) {
+    console.error('USDM extract error:', err);
+    const status = err.code === 'MISSING_API_KEY' ? 400 : 500;
+    res.status(status).json({ error: err.message, code: err.code || 'EXTRACT_FAILED' });
+  }
+});
+
+// POST /api/usdm/validate — accept USDM JSON (from this app OR external),
+// run Ajv + custom audits, return validation report.
+app.post('/api/usdm/validate', (req, res) => {
+  try {
+    const usdm = req.body?.usdm || req.body;
+    if (!usdm || typeof usdm !== 'object') {
+      return res.status(400).json({ error: 'Request body must be a USDM JSON object.' });
+    }
+    const validation = validateUsdm(usdm);
+    res.json({ validation });
+  } catch (err) {
+    console.error('USDM validate error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/usdm/to-docx — USDM JSON → Word document download.
+app.post('/api/usdm/to-docx', async (req, res) => {
+  try {
+    const usdm = req.body?.usdm || req.body;
+    if (!usdm || typeof usdm !== 'object') {
+      return res.status(400).json({ error: 'Request body must be a USDM JSON object.' });
+    }
+    const buffer = await usdmToDocx(usdm);
+    const filename = `${(usdm?.study?.name || 'USDM_Protocol').replace(/[^\w\-]+/g, '_').slice(0, 80)}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('USDM to-docx error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/usdm/health — cheap client-side check for GEMINI_API_KEY presence.
+app.get('/api/usdm/health', (req, res) => {
+  res.json({
+    geminiConfigured: !!process.env.GEMINI_API_KEY,
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  });
 });
 
 // ─── Serve frontend ───────────────────────────────────

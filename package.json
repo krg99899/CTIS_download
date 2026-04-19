@@ -8,8 +8,15 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "cors": "^2.8.5",
+    "docx": "^9.6.1",
     "express": "^4.21.0",
+    "multer": "^2.1.1",
     "node-fetch": "^2.7.0",
-    "cors": "^2.8.5"
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5"
   }
 }
