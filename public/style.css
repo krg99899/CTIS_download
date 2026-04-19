@@ -2626,3 +2626,30 @@ body {
   border-left: 2px solid rgba(16, 185, 129, 0.55);
   font-weight: 600;
 }
+
+/* Cost / token usage strip */
+.usdm-usage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(139, 92, 246, 0.06));
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.usdm-usage-strip strong { color: var(--accent-primary-light); font-weight: 800; }
+.usdm-usage-strip.cache {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.14), rgba(34, 211, 238, 0.08));
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #86efac;
+}
+
+/* Metering log line */
+.usdm-log-line.metering {
+  color: #a5b4fc;
+  font-weight: 600;
+}

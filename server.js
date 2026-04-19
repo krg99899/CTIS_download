@@ -9,6 +9,7 @@ const { validateUsdm } = require('./lib/usdm-validator');
 const { usdmToDocx } = require('./lib/usdm-docx');
 const { ExtractionQueue } = require('./lib/usdm-queue');
 const usdmCache = require('./lib/usdm-cache');
+const metering = require('./lib/usdm-metering');
 
 // Queue protects Gemini's free-tier 15 RPM and caps concurrent PDF decoding.
 // Raise USDM_CONCURRENCY once on a paid Gemini plan with >=1000 RPM.
@@ -934,7 +935,7 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
         console.log(`[usdm/${payload.stage}] ${payload.message}`);
         send({ type, stage: payload.stage, message: payload.message });
       };
-      const { usdm, toc } = await extractUsdmFromPdf(buf, { onProgress, sourcePath: originalname });
+      const { usdm, toc, usage } = await extractUsdmFromPdf(buf, { onProgress, sourcePath: originalname });
       send({ type: 'progress', stage: 'validate', message: 'Running USDM v4.0 validation (Ajv + audits)…' });
       const validation = validateUsdm(usdm);
 
@@ -942,14 +943,19 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
       // don't lock in a bad result; next upload re-runs.
       if (validation.score >= 50) {
         try {
-          await usdmCache.put(pdfHash, { usdm, validation, toc, warnings });
+          await usdmCache.put(pdfHash, { usdm, validation, toc, warnings, usage });
           send({ type: 'progress', stage: 'cache', message: `💾 Cached for future uploads (hash ${pdfHash.slice(0, 12)}…)` });
         } catch (e) {
           send({ type: 'warning', stage: 'cache', message: `Cache write skipped: ${e.message}` });
         }
       }
 
-      send({ type: 'complete', usdm, validation, warnings, toc });
+      // Persist metering for daily totals
+      metering.persistDaily(usage, {
+        pdfHash, filename: originalname, success: true, score: validation.score
+      }).catch(() => {});
+
+      send({ type: 'complete', usdm, validation, warnings, toc, usage });
     }
   };
 
@@ -986,6 +992,40 @@ app.get('/api/usdm/cache', async (req, res) => {
 app.delete('/api/usdm/cache/:hash', async (req, res) => {
   await usdmCache.remove(req.params.hash);
   res.json({ ok: true });
+});
+
+// GET /api/usdm/metering — token + cost totals.
+//   ?date=YYYY-MM-DD → that day's detail. Omit for today.
+//   ?days=7          → totals aggregated over the last N days.
+app.get('/api/usdm/metering', async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days || '1', 10)));
+    if (req.query.date) {
+      return res.json({ pricing: metering.pricing, day: await metering.getDaily(req.query.date) });
+    }
+    const availableDays = await metering.listDays();
+    const now = new Date();
+    const ymd = (d) => d.toISOString().slice(0, 10);
+    const wanted = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(now.getTime() - i * 86400000);
+      wanted.push(ymd(d));
+    }
+    const results = await Promise.all(wanted.map(d => metering.getDaily(d)));
+    const total = results.reduce((acc, d) => ({
+      extractions: acc.extractions + (d.extractions || 0),
+      totalTokens: acc.totalTokens + (d.totalTokens || 0),
+      costUsd: Math.round((acc.costUsd + (d.costUsd || 0)) * 10000) / 10000
+    }), { extractions: 0, totalTokens: 0, costUsd: 0 });
+    res.json({
+      pricing: metering.pricing,
+      days: results.reverse(),
+      total,
+      availableDays
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/usdm/validate — accept USDM JSON (from this app OR external),

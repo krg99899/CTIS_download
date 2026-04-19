@@ -3,3 +3,4 @@ downloads/
 *.log
 .env
 .cache/
+.metering/

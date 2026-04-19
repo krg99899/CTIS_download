@@ -2676,7 +2676,10 @@ function renderLogEvent(evt) {
   if (evt.type === 'queue') {
     appendLogLine(evt.message, 'queue');
   } else if (evt.type === 'progress' || evt.type === 'warning') {
-    const cls = evt.stage === 'cache' ? 'cache' : (evt.type === 'warning' ? 'warn' : null);
+    let cls = null;
+    if (evt.stage === 'cache')    cls = 'cache';
+    else if (evt.stage === 'metering') cls = 'metering';
+    else if (evt.type === 'warning')   cls = 'warn';
     appendLogLine(evt.message, cls);
   } else if (evt.type === 'complete') {
     appendLogLine(evt.fromCache ? '⚡ Served from cache — rendering result…' : '✓ Extraction complete — rendering result…', 'done');
@@ -2698,12 +2701,16 @@ function appendLogLine(message, cls) {
 
 function applyExtractionResult(result) {
   usdmState.lastExtractedUsdm = result.usdm;
+  usdmState.lastUsage = result.usage || null;
+  usdmState.lastFromCache = !!result.fromCache;
   renderUsdmResult({
     targetResult: 'usdmExtractResult',
     targetScore:  'usdmExtractScore',
     targetReport: 'usdmExtractReport',
     validation: result.validation,
-    usdm: result.usdm
+    usdm: result.usdm,
+    usage: result.usage,
+    fromCache: result.fromCache
   });
 
   const jsonText = JSON.stringify(result.usdm, null, 2);
@@ -2939,7 +2946,22 @@ function renderUsdmResult(opts) {
     return '<div class="usdm-msg-block ' + cls + '"><h4>' + title + ' (' + items.length + ')</h4><ul>' + top + '</ul>' + more + '</div>';
   }
 
-  reportEl.innerHTML = summary + listSection('Errors', validation.errors, 'err') + listSection('Warnings', validation.warnings, 'warn');
+  // Optional cost / usage strip when called from the extraction flow.
+  let usageStrip = '';
+  if (opts.fromCache) {
+    usageStrip = '<div class="usdm-usage-strip cache">⚡ Served from cache — no Gemini call made ($0.00)</div>';
+  } else if (opts.usage) {
+    const u = opts.usage;
+    usageStrip = '<div class="usdm-usage-strip">'
+      + '<span>💰 <strong>$' + (u.costUsd ?? 0).toFixed(4) + '</strong></span>'
+      + '<span>🔤 ' + (u.totalTokens || 0).toLocaleString() + ' tokens</span>'
+      + '<span>📞 ' + (u.calls || 0) + ' Gemini call(s)</span>'
+      + '<span>📥 ' + (u.promptTokens || 0).toLocaleString() + ' in</span>'
+      + '<span>📤 ' + (u.candidateTokens || 0).toLocaleString() + ' out</span>'
+      + '</div>';
+  }
+
+  reportEl.innerHTML = usageStrip + summary + listSection('Errors', validation.errors, 'err') + listSection('Warnings', validation.warnings, 'warn');
 }
 
 function downloadUsdmJson(usdm) {
