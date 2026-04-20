@@ -962,6 +962,12 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
   // Abort if client disconnects while queued or mid-run.
   req.on('close', () => { extractQueue.cancel(job); });
 
+  // Heartbeat every 20s keeps the connection alive through Railway's idle
+  // timeout while the job waits in queue or between long Gemini calls.
+  const heartbeat = setInterval(() => {
+    send({ type: 'heartbeat' });
+  }, 20000);
+
   try {
     await extractQueue.enqueue(job);
   } catch (err) {
@@ -974,6 +980,7 @@ app.post('/api/usdm/extract', upload.single('pdf'), async (req, res) => {
       send({ type: 'error', message: err.message || 'Extraction failed', code: err.code || 'EXTRACT_FAILED' });
     }
   } finally {
+    clearInterval(heartbeat);
     try { res.end(); } catch {}
   }
 });
