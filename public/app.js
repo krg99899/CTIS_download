@@ -1539,10 +1539,12 @@ async function onBulkTAChange() {
     const yearVal = els.bulkYearFilter?.value || '';
     const bulkDateRange = getDateRangeFromYearFilter(yearVal);
 
-    // Fetch a probe page (50 results) sorted DESC by decisionDate so we can
-    // apply client-side date filtering and estimate the filtered total.
-    const probeSize = 50;
-    const body = buildBulkSearchBody(taCode, indication, 1, probeSize, bulkDateRange);
+    // Fetch a probe page (100 results) WITHOUT date params so the CTIS API
+    // returns real results and an accurate totalRecords. Results are sorted
+    // DESC by decisionDate, so the first page is always the most recent.
+    // We then apply client-side date filtering to estimate the filtered total.
+    const probeSize = 100;
+    const body = buildBulkSearchBody(taCode, indication, 1, probeSize, {});
     const resp = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1558,24 +1560,27 @@ async function onBulkTAChange() {
     let dateNote = '';
 
     if (yearVal && (bulkDateRange.from || bulkDateRange.to)) {
-      // Client-side date filter on the probe page to estimate how many match
       const trials = data.data || [];
       let matchCount = 0;
       let hitOld = false;
       for (const t of trials) {
-        const d = t.decisionDate || t.authorisationDate || t.startDate || '';
-        if (d && bulkDateRange.from && d < bulkDateRange.from) { hitOld = true; break; }
-        if (d && bulkDateRange.to && d > bulkDateRange.to) continue;
+        const d = (t.decisionDate || t.authorisationDate || t.startDate || '').slice(0, 10);
+        if (!d) { matchCount++; continue; } // no date → include
+        if (bulkDateRange.from && d < bulkDateRange.from) { hitOld = true; break; }
+        if (bulkDateRange.to   && d > bulkDateRange.to)   continue;
         matchCount++;
       }
-      if (hitOld || trials.length === 0) {
-        // All results on page 1 were already older than the filter → only what we counted
+      if (trials.length === 0) {
+        displayTotal = 0;
+      } else if (hitOld) {
+        // Some or all of the first page is already older than the filter —
+        // only the matched count on this page is reliable as a lower bound.
         displayTotal = matchCount;
       } else if (trials.length < probeSize) {
-        // Fetched entire dataset
+        // Fetched the entire dataset — exact count
         displayTotal = matchCount;
       } else {
-        // Extrapolate: ratio of matched vs fetched, applied to total
+        // Extrapolate match ratio across the full total
         const ratio = matchCount / trials.length;
         displayTotal = Math.round(totalUnfiltered * ratio);
       }
