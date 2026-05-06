@@ -1165,7 +1165,15 @@ async function getDirectoryHandle() {
 async function streamToFileInDirectory(dirHandle, filename, response) {
   const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
-  await response.body.pipeTo(writable);
+  try {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) throw new Error('Server returned an empty file');
+    await writable.write(buffer);
+    await writable.close();
+  } catch (err) {
+    await writable.abort().catch(() => {});
+    throw err;
+  }
 }
 
 async function writeJsonToDirectory(dirHandle, filename, obj) {
@@ -1537,11 +1545,8 @@ async function onBulkTAChange() {
 
   try {
     const yearVal = els.bulkYearFilter?.value || '';
-
-    // Always fetch without date params — the CTIS API does not reliably filter
-    // totalRecords by date, so we show the full TA/indication count and note
-    // that the date filter will be applied trial-by-trial during the download.
-    const body = buildBulkSearchBody(taCode, indication, 1, 1, {});
+    const dateRange = yearVal ? getDateRangeFromYearFilter(yearVal) : {};
+    const body = buildBulkSearchBody(taCode, indication, 1, 1, dateRange);
     const resp = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1553,13 +1558,9 @@ async function onBulkTAChange() {
     const data = await resp.json();
     const total = data.pagination?.totalRecords || 0;
 
-    const dateNote = yearVal
-      ? ` <span style="color:var(--text-muted);font-size:0.82em">(date filter applied during download)</span>`
-      : '';
-
     els.bulkTrialInfo.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria.${dateNote} Bulk download will proceed with English Protocols ONLY.</span>`;
+      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria. Bulk download will proceed with English Protocols ONLY.</span>`;
 
     els.btnBulkDownload.disabled = total === 0;
     els.btnBulkDownload.innerHTML = `

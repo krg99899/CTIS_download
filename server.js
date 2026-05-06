@@ -818,9 +818,19 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
 
     let pdfBuffer, fileResponse;
     try {
-      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(docUrl));
+      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(docUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Referer': 'https://clinicaltrials.gov/',
+          'Accept': 'application/pdf,application/octet-stream,*/*'
+        }
+      }));
     } catch (fetchErr) {
       return res.status(fetchErr.status || 502).json({ error: 'Failed to fetch PDF from ClinicalTrials.gov' });
+    }
+
+    if (pdfBuffer.length === 0) {
+      return res.status(502).json({ error: 'CDN returned empty document — PDF may not be available yet' });
     }
 
     const langResult = await isEnglishProtocol(pdfBuffer);
@@ -868,9 +878,19 @@ app.get('/api/ctg/proxy-pdf', async (req, res) => {
 
     let pdfBuffer, fileResponse;
     try {
-      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(url));
+      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Referer': 'https://clinicaltrials.gov/',
+          'Accept': 'application/pdf,application/octet-stream,*/*'
+        }
+      }));
     } catch (fetchErr) {
       return res.status(fetchErr.status || 502).json({ error: 'Failed to fetch PDF' });
+    }
+
+    if (pdfBuffer.length === 0) {
+      return res.status(502).json({ error: 'CDN returned empty document — PDF may not be available yet' });
     }
 
     const langResult = await isEnglishProtocol(pdfBuffer);
