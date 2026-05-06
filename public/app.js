@@ -1515,6 +1515,65 @@ function buildBulkSearchBody(taCode, indication, page, size, dateRange = {}) {
   };
 }
 
+// Count CTIS trials matching the bulk-panel criteria.
+// The CTIS API does not honor decisionDateFrom/To in totalRecords, so when a
+// date filter is active we paginate (sorted DESC by decisionDate) and apply
+// the filter client-side, exiting early once trials fall before `from`.
+async function countCtisTrials(taCode, indication, dateRange) {
+  const noDateFilter = !dateRange.from && !dateRange.to;
+
+  // Fast path — no date filter, trust totalRecords.
+  if (noDateFilter) {
+    const body = buildBulkSearchBody(taCode, indication, 1, 1, {});
+    const resp = await fetch(`${API_BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('Count fetch failed');
+    const data = await resp.json();
+    return { count: data.pagination?.totalRecords || 0, exact: true, approx: false };
+  }
+
+  // Date filter — paginate and count client-side.
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 10;  // up to 1000 trials; beyond that we report "≥ N"
+  let count = 0;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const body = buildBulkSearchBody(taCode, indication, page, PAGE_SIZE, dateRange);
+    const resp = await fetch(`${API_BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('Count fetch failed');
+    const data = await resp.json();
+    const trials = data.data || [];
+    if (trials.length === 0) return { count, exact: true, approx: false };
+
+    let lastDate = '';
+    for (const t of trials) {
+      const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+      if (d) lastDate = d;
+      if (dateRange.from && d && d < dateRange.from) continue;
+      if (dateRange.to   && d && d > dateRange.to)   continue;
+      count++;
+    }
+
+    // Sorted DESC — once last trial on page is older than `from`, the rest are too.
+    if (dateRange.from && lastDate && lastDate < dateRange.from) {
+      return { count, exact: true, approx: false };
+    }
+
+    const totalPages = data.pagination?.totalPages || 0;
+    if (page >= totalPages) return { count, exact: true, approx: false };
+  }
+
+  // Hit MAX_PAGES — return what we have as a lower bound.
+  return { count, exact: false, approx: true };
+}
+
 async function onBulkTAChange() {
   const taCode = els.bulkTA.value;
   if (!taCode) {
@@ -1546,26 +1605,20 @@ async function onBulkTAChange() {
   try {
     const yearVal = els.bulkYearFilter?.value || '';
     const dateRange = yearVal ? getDateRangeFromYearFilter(yearVal) : {};
-    const body = buildBulkSearchBody(taCode, indication, 1, 1, dateRange);
-    const resp = await fetch(`${API_BASE}/api/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const { count: total, exact, approx } = await countCtisTrials(taCode, indication, dateRange);
 
-    if (!resp.ok) throw new Error('Count fetch failed');
-
-    const data = await resp.json();
-    const total = data.pagination?.totalRecords || 0;
+    const countLabel = exact
+      ? `<strong>${total.toLocaleString()}</strong>`
+      : `<strong>${approx ? '≥ ' : ''}${total.toLocaleString()}</strong>`;
 
     els.bulkTrialInfo.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria. Bulk download will proceed with English Protocols ONLY.</span>`;
+      <span>Found ${countLabel} trials matching criteria. Bulk download will proceed with English Protocols ONLY.</span>`;
 
     els.btnBulkDownload.disabled = total === 0;
     els.btnBulkDownload.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Start Bulk Download (${total.toLocaleString()} trials)
+      Start Bulk Download (${approx ? '≥ ' : ''}${total.toLocaleString()} trials)
     `;
   } catch (err) {
     console.warn('Could not fetch trial count for bulk panel:', err);
