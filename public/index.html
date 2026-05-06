@@ -317,6 +317,10 @@
             <input type="checkbox" id="bulkExcludeTerminated" checked>
             <span>Exclude Terminated Trials</span>
           </label>
+          <label class="toggle-chip" title="Save Ongoing/Authorised trials into an Ongoing/ subfolder and Completed trials into a Completed/ subfolder">
+            <input type="checkbox" id="bulkSplitByStatus" checked>
+            <span>Separate Ongoing / Completed into subfolders</span>
+          </label>
         </div>
 
         <div class="bulk-trial-info" id="bulkTrialInfo" style="display:none">
@@ -424,6 +428,10 @@
           <label class="toggle-chip" title="When no protocol PDF is available, save a CDISC USDM v4.0-aligned JSON fallback into a JSON/ subfolder. Note: SoA is not included — it lives only in the protocol PDF.">
             <input type="checkbox" id="bulkCTGFallbackJson" checked>
             <span>Fallback to USDM JSON if PDF missing</span>
+          </label>
+          <label class="toggle-chip" title="Save Recruiting/Active studies into an Ongoing/ subfolder and Completed studies into a Completed/ subfolder">
+            <input type="checkbox" id="bulkCTGSplitByStatus" checked>
+            <span>Separate Ongoing / Completed into subfolders</span>
           </label>
         </div>
 

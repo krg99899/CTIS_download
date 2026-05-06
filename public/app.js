@@ -152,6 +152,7 @@ const els = {
   bulkYearFilter: $('#bulkYearFilter'),
   bulkExcludeSuspended: $('#bulkExcludeSuspended'),
   bulkExcludeTerminated: $('#bulkExcludeTerminated'),
+  bulkSplitByStatus: $('#bulkSplitByStatus'),
   btnBulkDownload: $('#btnBulkDownload'),
   bulkTrialInfo: $('#bulkTrialInfo'),
   bulkCTISSection: $('#bulkCTISSection'),
@@ -165,6 +166,7 @@ const els = {
   bulkCTGExcludeSuspended: $('#bulkCTGExcludeSuspended'),
   bulkCTGExcludeTerminated: $('#bulkCTGExcludeTerminated'),
   bulkCTGFallbackJson:      $('#bulkCTGFallbackJson'),
+  bulkCTGSplitByStatus:     $('#bulkCTGSplitByStatus'),
   btnBulkDownloadCTG: $('#btnBulkDownloadCTG'),
   bulkCTGTrialInfo: $('#bulkCTGTrialInfo'),
   // Download Manager
@@ -1662,6 +1664,7 @@ async function bulkDownloadByCTG(arg1 = null) {
   const excludeSuspended   = resumeSession ? resumeSession.excludeSuspended   : (els.bulkCTGExcludeSuspended?.checked ?? true);
   const excludeTerminated  = resumeSession ? resumeSession.excludeTerminated  : (els.bulkCTGExcludeTerminated?.checked ?? true);
   const fallbackJson       = resumeSession ? (resumeSession.fallbackJson ?? true) : (els.bulkCTGFallbackJson?.checked ?? true);
+  const splitByStatus      = resumeSession ? (resumeSession.splitByStatus ?? true) : (els.bulkCTGSplitByStatus?.checked ?? true);
   const taCode             = resumeSession ? resumeSession.taCode             : (els.bulkCTGTA?.value || null);
   const indication         = resumeSession ? resumeSession.indication         : ((els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() || null : null);
   const ctgYearFilterVal   = resumeSession ? (resumeSession.yearFilter || '') : (els.bulkCTGYearFilter?.value || '');
@@ -1686,8 +1689,8 @@ async function bulkDownloadByCTG(arg1 = null) {
   let session;
   if (resumeSession) {
     session = { ...resumeSession, status: 'running', resumedAt: Date.now() };
+    if (session.splitByStatus === undefined) session.splitByStatus = true;
   } else {
-    const folderLabel = sanitizeFilename(condition);
     const displayLabel = indication || (taCode ? getTherapeuticAreaLabel(taCode) : condition);
     const folderBase   = indication ? sanitizeFilename(`${getTherapeuticAreaLabel(taCode || '')} - ${indication}`)
                        : taCode     ? sanitizeFilename(getTherapeuticAreaLabel(taCode))
@@ -1701,10 +1704,11 @@ async function bulkDownloadByCTG(arg1 = null) {
       excludeSuspended,
       excludeTerminated,
       fallbackJson,
+      splitByStatus,
       taCode,
       indication,
       taLabel: displayLabel || condition,
-      folderName: folderBase || 'ClinicalTrials-gov',
+      folderName: sanitizeFilename(`${folderBase || 'ClinicalTrials-gov'} - ${todayDateString()}`),
       status: 'running',
       totalTrials: 0,
       processedCount: 0,
@@ -1850,7 +1854,7 @@ async function bulkDownloadByCTG(arg1 = null) {
         session.nonEnCount += nonEnCount;
 
         if (englishDocs.length > 0) {
-          // PDF available → download PDF(s) only, skip JSON extraction
+          const targetFolder = await getStatusFolder(taFolder, study.overallStatus, session.splitByStatus);
           for (const doc of englishDocs) {
             const alreadyDl = await dmIsDownloaded(session.id, study.nct, doc.filename);
             if (alreadyDl) continue;
@@ -1865,7 +1869,7 @@ async function bulkDownloadByCTG(arg1 = null) {
                 session.failedCount++;
                 continue;
               }
-              await streamToFileInDirectory(taFolder, filename, docResp);
+              await streamToFileInDirectory(targetFolder, filename, docResp);
               await dmMarkDownloaded(session.id, study.nct, doc.filename);
               session.downloadedCount++;
               console.log(`✓ CTG PDF Downloaded: ${filename}`);
@@ -1880,7 +1884,8 @@ async function bulkDownloadByCTG(arg1 = null) {
           const alreadyDl = await dmIsDownloaded(session.id, study.nct, jsonKey);
           if (!alreadyDl) {
             try {
-              const jsonFolder = await taFolder.getDirectoryHandle('JSON', { create: true });
+              const statusFolder = await getStatusFolder(taFolder, study.overallStatus, session.splitByStatus);
+              const jsonFolder   = await statusFolder.getDirectoryHandle('JSON', { create: true });
               const jsonFilename = `${study.nct}.json`;
               await writeJsonToDirectory(jsonFolder, jsonFilename, trialJson);
               await dmMarkDownloaded(session.id, study.nct, jsonKey);
@@ -1984,6 +1989,7 @@ async function bulkDownloadByTA(arg1 = null) {
 
   const excludeSuspended  = resumeSession ? resumeSession.excludeSuspended  : els.bulkExcludeSuspended.checked;
   const excludeTerminated = resumeSession ? resumeSession.excludeTerminated : els.bulkExcludeTerminated.checked;
+  const splitByStatus     = resumeSession ? (resumeSession.splitByStatus ?? true) : (els.bulkSplitByStatus?.checked ?? true);
   const taLabel           = getTherapeuticAreaLabel(taCode);
   const indication        = resumeSession ? resumeSession.indication
     : (els.bulkIndication && !els.bulkIndication.disabled ? els.bulkIndication.value || null : null);
@@ -1996,17 +2002,20 @@ async function bulkDownloadByTA(arg1 = null) {
   let session;
   if (resumeSession) {
     session = { ...resumeSession, status: 'running', resumedAt: Date.now() };
+    if (session.splitByStatus === undefined) session.splitByStatus = splitByStatus;
   } else {
+    const baseLabel = indication ? `${taLabel} - ${indication}` : taLabel;
     session = {
       id: generateSessionId(),
       taCode,
       indication,
       yearFilter: yearFilterVal,
       taLabel,
-      folderName: indication ? sanitizeFilename(`${taLabel} - ${indication}`) : sanitizeFilename(taLabel),
+      folderName: sanitizeFilename(`${baseLabel} - ${todayDateString()}`),
       status: 'running',
       excludeSuspended,
       excludeTerminated,
+      splitByStatus,
       totalTrials: 0,
       processedCount: 0,
       downloadedCount: 0,
@@ -2174,9 +2183,8 @@ async function bulkDownloadByTA(arg1 = null) {
           if (englishDocs.length === 0) {
             session.skippedCount++;
           } else {
-            // Flattened: All documents in one folder, prefixed with CT number
+            const targetFolder = await getStatusFolder(taFolder, trial.ctStatus, session.splitByStatus);
             for (const doc of englishDocs) {
-              // Skip if this specific doc was already downloaded in this session
               const alreadyDl = await dmIsDownloaded(session.id, trial.ctNumber, doc.uuid);
               if (alreadyDl) continue;
 
@@ -2188,7 +2196,7 @@ async function bulkDownloadByTA(arg1 = null) {
                   session.failedCount++;
                   continue;
                 }
-                await streamToFileInDirectory(taFolder, filename, docResp);
+                await streamToFileInDirectory(targetFolder, filename, docResp);
                 await dmMarkDownloaded(session.id, trial.ctNumber, doc.uuid);
                 session.downloadedCount++;
                 console.log(`✓ Downloaded: ${filename}`);
@@ -2404,6 +2412,31 @@ function escapeHtml(str) {
 
 function sanitizeFilename(str) {
   return (str || '').replace(/[/\\?%*:|"<>]/g, '-').trim();
+}
+
+function todayDateString() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm   = String(d.getMonth() + 1).padStart(2, '0');
+  const dd   = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// Returns the correct folder handle based on trial status when splitByStatus is on.
+// CTIS: numeric ctStatus (2=Authorised/Ongoing, 5=Ongoing, 7=Completed)
+// CTG:  string overallStatus ('RECRUITING', 'COMPLETED', …)
+async function getStatusFolder(parentFolder, status, splitByStatus) {
+  if (!splitByStatus) return parentFolder;
+  if (typeof status === 'number') {
+    if (status === 7) return parentFolder.getDirectoryHandle('Completed', { create: true });
+    if (status === 2 || status === 5 || status === 11) return parentFolder.getDirectoryHandle('Ongoing', { create: true });
+  } else if (typeof status === 'string') {
+    const st = status.toUpperCase();
+    if (st === 'COMPLETED') return parentFolder.getDirectoryHandle('Completed', { create: true });
+    if (['RECRUITING', 'ACTIVE_NOT_RECRUITING', 'ENROLLING_BY_INVITATION', 'NOT_YET_RECRUITING'].includes(st))
+      return parentFolder.getDirectoryHandle('Ongoing', { create: true });
+  }
+  return parentFolder;
 }
 
 function getTherapeuticAreaLabel(code) {
