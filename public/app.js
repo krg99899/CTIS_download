@@ -1537,14 +1537,11 @@ async function onBulkTAChange() {
 
   try {
     const yearVal = els.bulkYearFilter?.value || '';
-    const bulkDateRange = getDateRangeFromYearFilter(yearVal);
 
-    // Fetch a probe page (100 results) WITHOUT date params so the CTIS API
-    // returns real results and an accurate totalRecords. Results are sorted
-    // DESC by decisionDate, so the first page is always the most recent.
-    // We then apply client-side date filtering to estimate the filtered total.
-    const probeSize = 100;
-    const body = buildBulkSearchBody(taCode, indication, 1, probeSize, {});
+    // Always fetch without date params — the CTIS API does not reliably filter
+    // totalRecords by date, so we show the full TA/indication count and note
+    // that the date filter will be applied trial-by-trial during the download.
+    const body = buildBulkSearchBody(taCode, indication, 1, 1, {});
     const resp = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1554,47 +1551,20 @@ async function onBulkTAChange() {
     if (!resp.ok) throw new Error('Count fetch failed');
 
     const data = await resp.json();
-    const totalUnfiltered = data.pagination?.totalRecords || 0;
+    const total = data.pagination?.totalRecords || 0;
 
-    let displayTotal = totalUnfiltered;
-    let dateNote = '';
-
-    if (yearVal && (bulkDateRange.from || bulkDateRange.to)) {
-      const trials = data.data || [];
-      let matchCount = 0;
-      let hitOld = false;
-      for (const t of trials) {
-        const d = (t.decisionDate || t.authorisationDate || t.startDate || '').slice(0, 10);
-        if (!d) { matchCount++; continue; } // no date → include
-        if (bulkDateRange.from && d < bulkDateRange.from) { hitOld = true; break; }
-        if (bulkDateRange.to   && d > bulkDateRange.to)   continue;
-        matchCount++;
-      }
-      if (trials.length === 0) {
-        displayTotal = 0;
-      } else if (hitOld) {
-        // Some or all of the first page is already older than the filter —
-        // only the matched count on this page is reliable as a lower bound.
-        displayTotal = matchCount;
-      } else if (trials.length < probeSize) {
-        // Fetched the entire dataset — exact count
-        displayTotal = matchCount;
-      } else {
-        // Extrapolate match ratio across the full total
-        const ratio = matchCount / trials.length;
-        displayTotal = Math.round(totalUnfiltered * ratio);
-      }
-      dateNote = ` <span style="color:var(--text-muted);font-size:0.82em">(estimated for selected period)</span>`;
-    }
+    const dateNote = yearVal
+      ? ` <span style="color:var(--text-muted);font-size:0.82em">(date filter applied during download)</span>`
+      : '';
 
     els.bulkTrialInfo.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span>Found <strong>~${displayTotal.toLocaleString()}</strong> trials matching criteria.${dateNote} Bulk download will proceed with English Protocols ONLY.</span>`;
+      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria.${dateNote} Bulk download will proceed with English Protocols ONLY.</span>`;
 
-    els.btnBulkDownload.disabled = displayTotal === 0;
+    els.btnBulkDownload.disabled = total === 0;
     els.btnBulkDownload.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Start Bulk Download (~${displayTotal.toLocaleString()} trials)
+      Start Bulk Download (${total.toLocaleString()} trials)
     `;
   } catch (err) {
     console.warn('Could not fetch trial count for bulk panel:', err);
