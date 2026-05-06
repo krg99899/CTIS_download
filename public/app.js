@@ -149,6 +149,7 @@ const els = {
   // Bulk download panel — EU CTIS
   bulkTA: $('#bulkTA'),
   bulkIndication: $('#bulkIndication'),
+  bulkYearFilter: $('#bulkYearFilter'),
   bulkExcludeSuspended: $('#bulkExcludeSuspended'),
   bulkExcludeTerminated: $('#bulkExcludeTerminated'),
   btnBulkDownload: $('#btnBulkDownload'),
@@ -160,6 +161,7 @@ const els = {
   bulkCTGIndication: $('#bulkCTGIndication'),
   bulkCTGCondition: $('#bulkCTGCondition'),
   bulkCTGPhase: $('#bulkCTGPhase'),
+  bulkCTGYearFilter: $('#bulkCTGYearFilter'),
   bulkCTGExcludeSuspended: $('#bulkCTGExcludeSuspended'),
   bulkCTGExcludeTerminated: $('#bulkCTGExcludeTerminated'),
   bulkCTGFallbackJson:      $('#bulkCTGFallbackJson'),
@@ -454,8 +456,10 @@ function bindEvents() {
     });
   }
   if (els.bulkCTGPhase)              els.bulkCTGPhase.addEventListener('change', onBulkCTGChange);
+  if (els.bulkCTGYearFilter)         els.bulkCTGYearFilter.addEventListener('change', onBulkCTGChange);
   if (els.bulkCTGExcludeSuspended)   els.bulkCTGExcludeSuspended.addEventListener('change', onBulkCTGChange);
   if (els.bulkCTGExcludeTerminated)  els.bulkCTGExcludeTerminated.addEventListener('change', onBulkCTGChange);
+  if (els.bulkYearFilter)            els.bulkYearFilter.addEventListener('change', onBulkTAChange);
   if (els.btnBulkDownloadCTG) els.btnBulkDownloadCTG.addEventListener('click', bulkDownloadByCTG);
 
   // Auto-search on filter change
@@ -497,15 +501,17 @@ function toggleFilters() {
 }
 
 function populateYearOptions() {
-  const group = document.getElementById('yearOptionsGroup');
-  if (!group) return;
   const currentYear = new Date().getFullYear();
-  for (let y = currentYear; y >= 2014; y--) {
-    const opt = document.createElement('option');
-    opt.value = String(y);
-    opt.textContent = String(y);
-    group.appendChild(opt);
-  }
+  ['yearOptionsGroup', 'bulkYearOptionsGroup', 'bulkCTGYearOptionsGroup'].forEach(id => {
+    const group = document.getElementById(id);
+    if (!group) return;
+    for (let y = currentYear; y >= 2014; y--) {
+      const opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = String(y);
+      group.appendChild(opt);
+    }
+  });
 }
 
 function getDateRangeFromYearFilter(value) {
@@ -1449,7 +1455,7 @@ async function batchDownloadVisible() {
 // Full pagination + IndexedDB checkpoint + resume
 // ═══════════════════════════════════════════
 
-function buildBulkSearchBody(taCode, indication, page, size) {
+function buildBulkSearchBody(taCode, indication, page, size, dateRange = {}) {
   return {
     pagination: { page, size },
     sort: { property: 'decisionDate', direction: 'DESC' },
@@ -1468,7 +1474,9 @@ function buildBulkSearchBody(taCode, indication, page, size) {
       hasSeriousBreach: null, hasUnexpectedEvent: null,
       hasUrgentSafetyMeasure: null, isTransitioned: null,
       eudraCtCode: null, trialRegion: null,
-      vulnerablePopulation: null, mscStatus: null
+      vulnerablePopulation: null, mscStatus: null,
+      decisionDateFrom: dateRange.from || null,
+      decisionDateTo: dateRange.to || null
     }
   };
 }
@@ -1502,7 +1510,8 @@ async function onBulkTAChange() {
   `;
 
   try {
-    const body = buildBulkSearchBody(taCode, indication, 1, 1);
+    const bulkDateRange = getDateRangeFromYearFilter(els.bulkYearFilter?.value || '');
+    const body = buildBulkSearchBody(taCode, indication, 1, 1, bulkDateRange);
     const resp = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1630,6 +1639,8 @@ async function bulkDownloadByCTG(arg1 = null) {
   const fallbackJson       = resumeSession ? (resumeSession.fallbackJson ?? true) : (els.bulkCTGFallbackJson?.checked ?? true);
   const taCode             = resumeSession ? resumeSession.taCode             : (els.bulkCTGTA?.value || null);
   const indication         = resumeSession ? resumeSession.indication         : ((els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() || null : null);
+  const ctgYearFilterVal   = resumeSession ? (resumeSession.yearFilter || '') : (els.bulkCTGYearFilter?.value || '');
+  const ctgBulkDateRange   = getDateRangeFromYearFilter(ctgYearFilterVal);
 
   if (!window.showDirectoryPicker) {
     showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a Chromium-based browser.');
@@ -1661,6 +1672,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       sessionSource: 'ctg',
       condition,
       phase,
+      yearFilter: ctgYearFilterVal,
       excludeSuspended,
       excludeTerminated,
       fallbackJson,
@@ -1766,7 +1778,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       const resp = await fetchWithRetry(`${API_BASE}/api/ctg/bulk-search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ condition, phase, pageToken: nextPageToken, pageSize: 100 })
+        body: JSON.stringify({ condition, phase, dateFrom: ctgBulkDateRange.from, dateTo: ctgBulkDateRange.to, pageToken: nextPageToken, pageSize: 100 })
       });
       const data = await resp.json();
 
@@ -1950,6 +1962,8 @@ async function bulkDownloadByTA(arg1 = null) {
   const taLabel           = getTherapeuticAreaLabel(taCode);
   const indication        = resumeSession ? resumeSession.indication
     : (els.bulkIndication && !els.bulkIndication.disabled ? els.bulkIndication.value || null : null);
+  const yearFilterVal     = resumeSession ? (resumeSession.yearFilter || '') : (els.bulkYearFilter?.value || '');
+  const bulkDateRange     = getDateRangeFromYearFilter(yearFilterVal);
 
   state.bulkCancelled = false;
 
@@ -1962,6 +1976,7 @@ async function bulkDownloadByTA(arg1 = null) {
       id: generateSessionId(),
       taCode,
       indication,
+      yearFilter: yearFilterVal,
       taLabel,
       folderName: indication ? sanitizeFilename(`${taLabel} - ${indication}`) : sanitizeFilename(taLabel),
       status: 'running',
@@ -2052,7 +2067,7 @@ async function bulkDownloadByTA(arg1 = null) {
     do {
       if (state.bulkCancelled) break;
 
-      const body = buildBulkSearchBody(taCode, indication, pageNum, PAGE_SIZE);
+      const body = buildBulkSearchBody(taCode, indication, pageNum, PAGE_SIZE, bulkDateRange);
       const resp = await fetchWithRetry(`${API_BASE}/api/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

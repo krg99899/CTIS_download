@@ -899,7 +899,7 @@ app.get('/api/ctg/proxy-pdf', async (req, res) => {
 // Uses cursor-based pagination via nextPageToken
 app.post('/api/ctg/bulk-search', async (req, res) => {
   try {
-    const { condition, phase, overallStatus, pageToken, pageSize = 100 } = req.body;
+    const { condition, phase, overallStatus, dateFrom, dateTo, pageToken, pageSize = 100 } = req.body;
 
     const params = new URLSearchParams({
       format: 'json',
@@ -915,6 +915,11 @@ app.post('/api/ctg/bulk-search', async (req, res) => {
     if (condition) params.append('query.cond', condition);
     if (phase) params.append('filter.phase', `PHASE${phase.replace('PHASE', '')}`);
     if (overallStatus) params.append('filter.overallStatus', overallStatus);
+    if (dateFrom || dateTo) {
+      const from = dateFrom || '2000-01-01';
+      const to   = dateTo   || new Date().toISOString().slice(0, 10);
+      params.append('filter.advanced', `AREA[StartDate]RANGE[${from},${to}]`);
+    }
     if (pageToken) params.append('pageToken', pageToken);
 
     const response = await fetch(`${CTG_API}/studies?${params.toString()}`, {

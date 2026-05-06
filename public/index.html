@@ -289,6 +289,25 @@
           </div>
         </div>
 
+        <div class="bulk-selects-row" style="margin-top:0.75rem">
+          <div class="bulk-select-group">
+            <label for="bulkYearFilter">Year / Period
+              <span class="filter-hint">Optional — narrows by decision date</span>
+            </label>
+            <select id="bulkYearFilter">
+              <option value="">Any time</option>
+              <optgroup label="Recent">
+                <option value="last1">Last 1 year</option>
+                <option value="last2">Last 2 years</option>
+                <option value="last3">Last 3 years</option>
+                <option value="last4">Last 4 years</option>
+                <option value="last5">Last 5 years</option>
+              </optgroup>
+              <optgroup label="Specific Year" id="bulkYearOptionsGroup"></optgroup>
+            </select>
+          </div>
+        </div>
+
         <div class="bulk-options-row">
           <label class="toggle-chip" title="Skip trials with Suspended status (code 8)">
             <input type="checkbox" id="bulkExcludeSuspended" checked>
@@ -373,6 +392,22 @@
               <option value="2">Phase 2</option>
               <option value="3">Phase 3</option>
               <option value="4">Phase 4</option>
+            </select>
+          </div>
+          <div class="bulk-select-group">
+            <label for="bulkCTGYearFilter">Year / Period
+              <span class="filter-hint">Optional — narrows by start date</span>
+            </label>
+            <select id="bulkCTGYearFilter">
+              <option value="">Any time</option>
+              <optgroup label="Recent">
+                <option value="last1">Last 1 year</option>
+                <option value="last2">Last 2 years</option>
+                <option value="last3">Last 3 years</option>
+                <option value="last4">Last 4 years</option>
+                <option value="last5">Last 5 years</option>
+              </optgroup>
+              <optgroup label="Specific Year" id="bulkCTGYearOptionsGroup"></optgroup>
             </select>
           </div>
         </div>
