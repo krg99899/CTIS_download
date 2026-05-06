@@ -1536,8 +1536,13 @@ async function onBulkTAChange() {
   `;
 
   try {
-    const bulkDateRange = getDateRangeFromYearFilter(els.bulkYearFilter?.value || '');
-    const body = buildBulkSearchBody(taCode, indication, 1, 1, bulkDateRange);
+    const yearVal = els.bulkYearFilter?.value || '';
+    const bulkDateRange = getDateRangeFromYearFilter(yearVal);
+
+    // Fetch a probe page (50 results) sorted DESC by decisionDate so we can
+    // apply client-side date filtering and estimate the filtered total.
+    const probeSize = 50;
+    const body = buildBulkSearchBody(taCode, indication, 1, probeSize, bulkDateRange);
     const resp = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1547,18 +1552,44 @@ async function onBulkTAChange() {
     if (!resp.ok) throw new Error('Count fetch failed');
 
     const data = await resp.json();
-    const total = data.pagination?.totalRecords || 0;
-    const taLabel = getTherapeuticAreaLabel(taCode);
-    const indicationText = indication ? ` → <strong>${escapeHtml(indication)}</strong>` : '';
+    const totalUnfiltered = data.pagination?.totalRecords || 0;
+
+    let displayTotal = totalUnfiltered;
+    let dateNote = '';
+
+    if (yearVal && (bulkDateRange.from || bulkDateRange.to)) {
+      // Client-side date filter on the probe page to estimate how many match
+      const trials = data.data || [];
+      let matchCount = 0;
+      let hitOld = false;
+      for (const t of trials) {
+        const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+        if (d && bulkDateRange.from && d < bulkDateRange.from) { hitOld = true; break; }
+        if (d && bulkDateRange.to && d > bulkDateRange.to) continue;
+        matchCount++;
+      }
+      if (hitOld || trials.length === 0) {
+        // All results on page 1 were already older than the filter → only what we counted
+        displayTotal = matchCount;
+      } else if (trials.length < probeSize) {
+        // Fetched entire dataset
+        displayTotal = matchCount;
+      } else {
+        // Extrapolate: ratio of matched vs fetched, applied to total
+        const ratio = matchCount / trials.length;
+        displayTotal = Math.round(totalUnfiltered * ratio);
+      }
+      dateNote = ` <span style="color:var(--text-muted);font-size:0.82em">(estimated for selected period)</span>`;
+    }
 
     els.bulkTrialInfo.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:0.7"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 5v4M7 4v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span>Found <strong>${total.toLocaleString()}</strong> trials matching criteria. Bulk download will proceed with English Protocols ONLY.</span>`;
+      <span>Found <strong>~${displayTotal.toLocaleString()}</strong> trials matching criteria.${dateNote} Bulk download will proceed with English Protocols ONLY.</span>`;
 
-    els.btnBulkDownload.disabled = total === 0;
+    els.btnBulkDownload.disabled = displayTotal === 0;
     els.btnBulkDownload.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Start Bulk Download (${total.toLocaleString()} trials)
+      Start Bulk Download (~${displayTotal.toLocaleString()} trials)
     `;
   } catch (err) {
     console.warn('Could not fetch trial count for bulk panel:', err);
