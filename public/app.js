@@ -516,6 +516,26 @@ function populateYearOptions() {
   });
 }
 
+// CTIS returns dates as DD/MM/YYYY in `decisionDateOverall`. Convert to ISO
+// (YYYY-MM-DD) so they sort/compare correctly against our range bounds.
+function parseCtisDate(str) {
+  if (!str || typeof str !== 'string') return '';
+  const m = str.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
+// Pull a comparable ISO date out of a CTIS trial summary. `decisionDateOverall`
+// is the canonical field; `decisionDate` is a comma-separated per-country list
+// (e.g. "DE: 16/04/2026, BE: 16/04/2026") that cannot be compared directly.
+function ctisTrialDate(t) {
+  if (!t) return '';
+  const iso = parseCtisDate(t.decisionDateOverall) || parseCtisDate(t.lastUpdated);
+  if (iso) return iso;
+  // Last resort: pick the first DD/MM/YYYY token out of `decisionDate`.
+  const m = typeof t.decisionDate === 'string' && t.decisionDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
 function getDateRangeFromYearFilter(value) {
   if (!value) return { from: null, to: null };
   const today = new Date();
@@ -687,10 +707,11 @@ async function performSearchCTIS() {
     if (els.excludeSuspended && els.excludeSuspended.checked) {
       fetchedResults = fetchedResults.filter(t => t.ctStatus !== 8);
     }
-    // Client-side date fallback — runs whether or not the API honoured the top-level date params
+    // The CTIS API ignores date params entirely, so client-side filtering
+    // on `decisionDateOverall` (DD/MM/YYYY → ISO) is the actual filter.
     if (dateRange.from || dateRange.to) {
       fetchedResults = fetchedResults.filter(t => {
-        const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+        const d = ctisTrialDate(t);
         if (!d) return true;
         if (dateRange.from && d < dateRange.from) return false;
         if (dateRange.to   && d > dateRange.to)   return false;
@@ -1554,10 +1575,11 @@ async function countCtisTrials(taCode, indication, dateRange) {
 
     let lastDate = '';
     for (const t of trials) {
-      const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+      const d = ctisTrialDate(t);
       if (d) lastDate = d;
       if (dateRange.from && d && d < dateRange.from) continue;
       if (dateRange.to   && d && d > dateRange.to)   continue;
+      if (!d) continue;  // unknown date — exclude when filter is active
       count++;
     }
 
@@ -2173,18 +2195,20 @@ async function bulkDownloadByTA(arg1 = null) {
       totalPages          = data.pagination?.totalPages   || 1;
       let trials = data.data || [];
 
-      // Client-side date filter (fallback if API didn't honour top-level params)
-      // Results are sorted DESC by decisionDate, so we can also stop early
+      // CTIS API ignores date params, so client-side filter on
+      // decisionDateOverall is the only thing actually limiting by period.
+      // Results are sorted DESC by decisionDate, so we can early-exit pagination.
       if (bulkDateRange.from || bulkDateRange.to) {
         const filtered = [];
         let hitOldTrial = false;
         for (const t of trials) {
-          const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+          const d = ctisTrialDate(t);
           if (d && bulkDateRange.from && d < bulkDateRange.from) {
             hitOldTrial = true; // all remaining pages will also be older — stop paginating
             break;
           }
           if (d && bulkDateRange.to && d > bulkDateRange.to) continue; // too new, skip
+          if (!d) continue;  // unknown date — exclude when filter is active
           filtered.push(t);
         }
         trials = filtered;
