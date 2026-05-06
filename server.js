@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const cors = require('cors');
 const path = require('path');
 const multer = require('multer');
+const pdfParse = require('pdf-parse');
 
 const { extractUsdmFromPdf } = require('./lib/usdm-extractor');
 const { validateUsdm } = require('./lib/usdm-validator');
@@ -60,6 +61,58 @@ function shouldExcludeDocument(docTitle, docTypeCode) {
   // Then check title patterns
   if (!docTitle) return false;
   return EXCLUDED_DOC_PATTERNS.some(pattern => pattern.test(docTitle));
+}
+
+// ─── English Protocol Language Detector ──────────────────
+// Uses pdf-parse on the first 3 pages only (fast).
+// Two signals:
+//   1. "the" frequency — virtually unique to English among EU languages
+//   2. English-only clinical section headers
+// On parse failure the file is allowed through (benefit of the doubt).
+async function isEnglishProtocol(buffer) {
+  try {
+    const data = await pdfParse(buffer, { max: 3 });
+    const text = (data.text || '').toLowerCase();
+
+    if (text.length < 80) {
+      // Scanned / image-only PDF — can't check, allow
+      return { isEnglish: true, reason: 'no extractable text' };
+    }
+
+    const wordCount = text.split(/\s+/).length;
+
+    // "the" is virtually absent as an article in French, German, Spanish,
+    // Italian, Dutch, Polish, Greek, etc.
+    const theCount = (text.match(/\bthe\b/g) || []).length;
+    const theRatio = theCount / Math.max(wordCount, 1);
+
+    // Section headers that exist only in English clinical protocols
+    const englishHeaders = [
+      'eligibility criteria', 'inclusion criteria', 'exclusion criteria',
+      'schedule of activities', 'informed consent', 'study design',
+      'primary endpoint', 'secondary endpoint', 'primary objective',
+      'secondary objective', 'study population', 'statistical analysis',
+      'protocol synopsis', 'clinical study protocol', 'clinical trial protocol',
+    ];
+    const headerHits = englishHeaders.filter(h => text.includes(h)).length;
+
+    // Accept if "the" frequency is typical of English (>2 % of words, ≥5 hits)
+    // OR at least 2 English-only section headers are present
+    const isEnglish = (theRatio > 0.02 && theCount >= 5) || headerHits >= 2;
+
+    return { isEnglish, theRatio: theRatio.toFixed(4), theCount, headerHits };
+  } catch (err) {
+    console.warn('Language check parse error — allowing file through:', err.message);
+    return { isEnglish: true, reason: 'parse error' };
+  }
+}
+
+// ─── Fetch remote URL into a Buffer ──────────────────────
+async function fetchToBuffer(url, fetchOptions = {}) {
+  const resp = await fetch(url, fetchOptions);
+  if (!resp.ok) throw Object.assign(new Error(`HTTP ${resp.status}`), { status: resp.status, resp });
+  const arrayBuf = await resp.arrayBuffer();
+  return { buffer: Buffer.from(arrayBuf), resp };
 }
 
 // Common headers for CTIS API requests
@@ -185,25 +238,37 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
       return res.status(500).json({ error: 'CTIS returned no S3 URL' });
     }
 
-    // Step 2 — Stream the PDF from S3
-    const fileResponse = await fetch(s3Url, { method: 'GET' });
-
-    if (!fileResponse.ok) {
-      const errorText = await fileResponse.text();
-      console.error(`S3 Fetch Error [${uuid}]:`, fileResponse.status, errorText);
-      return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF from secure storage', details: errorText });
+    // Step 2 — Fetch PDF from S3 into buffer (needed for language check)
+    let pdfBuffer, fileResponse;
+    try {
+      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(s3Url));
+    } catch (fetchErr) {
+      if (fetchErr.resp) {
+        const errorText = await fetchErr.resp.text().catch(() => '');
+        console.error(`S3 Fetch Error [${uuid}]:`, fetchErr.status, errorText);
+        return res.status(fetchErr.status).json({ error: 'Failed to fetch PDF from secure storage', details: errorText });
+      }
+      throw fetchErr;
     }
 
-    console.log(`✓ Proxying Protocol PDF [${ctNumber}/${uuid}] — ${fileResponse.headers.get('content-length')} bytes`);
+    // Step 3 — Language check: English only
+    const langResult = await isEnglishProtocol(pdfBuffer);
+    if (!langResult.isEnglish) {
+      console.warn(`⛔ LANG-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+      return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
+    }
+
+    const byteLength = pdfBuffer.length;
+    console.log(`✓ Serving English Protocol PDF [${ctNumber}/${uuid}] — ${byteLength} bytes (the=${langResult.theRatio}, headers=${langResult.headerHits})`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', byteLength);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store');
 
-    // Pipe PDF stream to browser
-    fileResponse.body.pipe(res);
+    res.end(pdfBuffer);
   } catch (err) {
     console.error('Download error:', err.message);
     res.status(500).json({ error: 'Failed to download document', details: err.message });
@@ -236,6 +301,8 @@ app.post('/api/ctg/search', async (req, res) => {
     const keyword = req.body.query || '';
     const phase = req.body.phase || '';
     const status = req.body.status || '';
+    const dateFrom = req.body.dateFrom || null;
+    const dateTo = req.body.dateTo || null;
     const pageSize = req.body.pageSize || 20;
     const pageToken = req.body.pageToken || null;
 
@@ -257,6 +324,12 @@ app.post('/api/ctg/search', async (req, res) => {
         'TERMINATED': 'TERMINATED'
       };
       params.append('filter.overallStatus', statusMap[status] || status);
+    }
+
+    if (dateFrom || dateTo) {
+      const from = dateFrom || '2000-01-01';
+      const to = dateTo || new Date().toISOString().slice(0, 10);
+      params.append('filter.advanced', `AREA[StartDate]RANGE[${from},${to}]`);
     }
 
     if (pageToken) params.append('pageToken', pageToken);
@@ -742,24 +815,30 @@ app.get('/api/ctg/document/:nct/:filename', async (req, res) => {
       return res.status(404).json({ error: 'Document URL not available' });
     }
 
-    const fileResponse = await fetch(docUrl, { method: 'GET' });
+    let pdfBuffer, fileResponse;
+    try {
+      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(docUrl));
+    } catch (fetchErr) {
+      return res.status(fetchErr.status || 502).json({ error: 'Failed to fetch PDF from ClinicalTrials.gov' });
+    }
 
-    if (!fileResponse.ok) {
-      return res.status(fileResponse.status).json({
-        error: 'Failed to fetch PDF from ClinicalTrials.gov'
-      });
+    const langResult = await isEnglishProtocol(pdfBuffer);
+    if (!langResult.isEnglish) {
+      console.warn(`⛔ LANG-BLOCKED CTG: Non-English protocol [${nct}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+      return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
     }
 
     const safeFilename = (doc.filename || filename).replace(/[^\w\s.\-]/g, '_');
-    console.log(`✓ Proxying CTG Protocol [${nct}/${safeFilename}] — ${fileResponse.headers.get('content-length')} bytes`);
+    console.log(`✓ Serving English CTG Protocol [${nct}/${safeFilename}] — ${pdfBuffer.length} bytes`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store');
 
-    fileResponse.body.pipe(res);
+    res.end(pdfBuffer);
 
   } catch (err) {
     console.error('ClinicalTrials.gov download error:', err.message);
@@ -786,21 +865,29 @@ app.get('/api/ctg/proxy-pdf', async (req, res) => {
       return res.status(400).json({ error: 'URL must be from clinicaltrials.gov' });
     }
 
-    const fileResponse = await fetch(url, { method: 'GET' });
+    let pdfBuffer, fileResponse;
+    try {
+      ({ buffer: pdfBuffer, resp: fileResponse } = await fetchToBuffer(url));
+    } catch (fetchErr) {
+      return res.status(fetchErr.status || 502).json({ error: 'Failed to fetch PDF' });
+    }
 
-    if (!fileResponse.ok) {
-      return res.status(fileResponse.status).json({ error: 'Failed to fetch PDF' });
+    const langResult = await isEnglishProtocol(pdfBuffer);
+    if (!langResult.isEnglish) {
+      console.warn(`⛔ LANG-BLOCKED proxy-pdf: Non-English — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+      return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
     }
 
     const safeFilename = (filename || 'protocol.pdf').replace(/[^\w\s.\-]/g, '_');
-    console.log(`✓ Proxying CTG PDF via proxy-pdf: ${safeFilename}`);
+    console.log(`✓ Serving English CTG proxy-pdf: ${safeFilename} — ${pdfBuffer.length} bytes`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Cache-Control', 'no-store');
 
-    fileResponse.body.pipe(res);
+    res.end(pdfBuffer);
 
   } catch (err) {
     console.error('CTG proxy-pdf error:', err.message);

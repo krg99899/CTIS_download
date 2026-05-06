@@ -122,6 +122,7 @@ const els = {
   trialPhase: $('#trialPhase'),
   trialStatus: $('#trialStatus'),
   sponsor: $('#sponsor'),
+  yearFilter: $('#yearFilter'),
   hasProtocol: $('#hasProtocol'),
   hasResults: $('#hasResults'),
   excludeSuspended: $('#excludeSuspended'),
@@ -341,6 +342,7 @@ async function fetchWithRetry(url, options = {}, maxAttempts = 3) {
 
 // ── Init ───────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  populateYearOptions();
   bindEvents();
   loadDownloadsInfo();
   await openDmDb();
@@ -494,6 +496,32 @@ function toggleFilters() {
   els.filtersSection.classList.toggle('open', state.filtersOpen);
 }
 
+function populateYearOptions() {
+  const group = document.getElementById('yearOptionsGroup');
+  if (!group) return;
+  const currentYear = new Date().getFullYear();
+  for (let y = currentYear; y >= 2014; y--) {
+    const opt = document.createElement('option');
+    opt.value = String(y);
+    opt.textContent = String(y);
+    group.appendChild(opt);
+  }
+}
+
+function getDateRangeFromYearFilter(value) {
+  if (!value) return { from: null, to: null };
+  const today = new Date();
+  const toStr = today.toISOString().slice(0, 10);
+  if (value.startsWith('last')) {
+    const years = parseInt(value.replace('last', ''), 10);
+    const from = new Date(today);
+    from.setFullYear(from.getFullYear() - years);
+    return { from: from.toISOString().slice(0, 10), to: toStr };
+  }
+  const year = parseInt(value, 10);
+  return { from: `${year}-01-01`, to: `${year}-12-31` };
+}
+
 function clearFilters() {
   els.searchInput.value = '';
   els.therapeuticArea.value = '';
@@ -501,6 +529,7 @@ function clearFilters() {
   els.trialPhase.value = '';
   els.trialStatus.value = '';
   if (els.sponsor) els.sponsor.value = '';
+  if (els.yearFilter) els.yearFilter.value = '';
   els.hasProtocol.checked = false;
   els.hasResults.checked = false;
   if (els.excludeSuspended) els.excludeSuspended.checked = true;
@@ -524,6 +553,7 @@ async function performSearchCTG() {
   const keyword = els.searchInput.value.trim();
   const phase = els.trialPhase.value || null;
   const status = els.trialStatus.value || null;
+  const dateRange = getDateRangeFromYearFilter(els.yearFilter ? els.yearFilter.value : '');
 
   // Map CTIS status codes to ClinicalTrials.gov status
   const statusMap = {
@@ -539,6 +569,8 @@ async function performSearchCTG() {
     query: keyword || 'Trials',
     phase: phase,
     status: ctgStatus,
+    dateFrom: dateRange.from,
+    dateTo: dateRange.to,
     pageSize: state.pageSize,
     pageToken: null
   };
@@ -574,6 +606,7 @@ async function performSearchCTIS() {
   const phase = els.trialPhase.value || null;
   const status = els.trialStatus.value || null;
   const sponsor = els.sponsor ? els.sponsor.value.trim() || null : null;
+  const dateRange = getDateRangeFromYearFilter(els.yearFilter ? els.yearFilter.value : '');
 
   const body = {
     pagination: { page: state.currentPage, size: state.pageSize },
@@ -612,7 +645,9 @@ async function performSearchCTIS() {
       eudraCtCode: null,
       trialRegion: null,
       vulnerablePopulation: null,
-      mscStatus: null
+      mscStatus: null,
+      decisionDateFrom: dateRange.from,
+      decisionDateTo: dateRange.to
     }
   };
 

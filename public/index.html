@@ -187,6 +187,21 @@
             <label for="sponsor">Sponsor</label>
             <input type="text" id="sponsor" placeholder="Enter sponsor name…">
           </div>
+
+          <div class="filter-group">
+            <label for="yearFilter">Year / Period</label>
+            <select id="yearFilter">
+              <option value="">Any time</option>
+              <optgroup label="Recent">
+                <option value="last1">Last 1 year</option>
+                <option value="last2">Last 2 years</option>
+                <option value="last3">Last 3 years</option>
+                <option value="last4">Last 4 years</option>
+                <option value="last5">Last 5 years</option>
+              </optgroup>
+              <optgroup label="Specific Year" id="yearOptionsGroup"></optgroup>
+            </select>
+          </div>
         </div>
 
         <div class="filter-actions">
