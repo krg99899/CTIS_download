@@ -370,6 +370,7 @@ app.post('/api/ctg/search', async (req, res) => {
         status: statusModule.overallStatus || 'N/A',
         recruitmentStatus: statusModule.recruitmentStatus || 'N/A',
         enrollmentCount: statusModule.enrollmentInfo?.actualEnrollment || 0,
+        startDate: statusModule.startDateStruct?.date || '',
         sourceType: 'clinicaltrials.gov',
         hasProtocol: !!protocolSection
       };

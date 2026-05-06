@@ -591,7 +591,20 @@ async function performSearchCTG() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
 
-    state.results = data.studies || [];
+    let ctgResults = data.studies || [];
+    // Client-side date fallback for CTG (server-side filter.advanced is primary)
+    const ctgDateRange = getDateRangeFromYearFilter(els.yearFilter ? els.yearFilter.value : '');
+    if (ctgDateRange.from || ctgDateRange.to) {
+      ctgResults = ctgResults.filter(t => {
+        const d = t.startDate || '';
+        if (!d) return true;
+        if (ctgDateRange.from && d < ctgDateRange.from) return false;
+        if (ctgDateRange.to   && d > ctgDateRange.to)   return false;
+        return true;
+      });
+    }
+
+    state.results = ctgResults;
     state.totalRecords = data.totalCount || 0;
     state.totalPages = Math.ceil(state.totalRecords / state.pageSize) || 0;
 
@@ -614,9 +627,12 @@ async function performSearchCTIS() {
   const sponsor = els.sponsor ? els.sponsor.value.trim() || null : null;
   const dateRange = getDateRangeFromYearFilter(els.yearFilter ? els.yearFilter.value : '');
 
+  // Date params at top level — the CTIS API ignores them inside searchCriteria
   const body = {
     pagination: { page: state.currentPage, size: state.pageSize },
     sort: { property: 'decisionDate', direction: 'DESC' },
+    ...(dateRange.from ? { decisionDateFrom: dateRange.from } : {}),
+    ...(dateRange.to   ? { decisionDateTo:   dateRange.to   } : {}),
     searchCriteria: {
       containAll: keyword || null,
       containAny: null,
@@ -651,9 +667,7 @@ async function performSearchCTIS() {
       eudraCtCode: null,
       trialRegion: null,
       vulnerablePopulation: null,
-      mscStatus: null,
-      decisionDateFrom: dateRange.from,
-      decisionDateTo: dateRange.to
+      mscStatus: null
     }
   };
 
@@ -670,6 +684,16 @@ async function performSearchCTIS() {
     let fetchedResults = data.data || [];
     if (els.excludeSuspended && els.excludeSuspended.checked) {
       fetchedResults = fetchedResults.filter(t => t.ctStatus !== 8);
+    }
+    // Client-side date fallback — runs whether or not the API honoured the top-level date params
+    if (dateRange.from || dateRange.to) {
+      fetchedResults = fetchedResults.filter(t => {
+        const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+        if (!d) return true;
+        if (dateRange.from && d < dateRange.from) return false;
+        if (dateRange.to   && d > dateRange.to)   return false;
+        return true;
+      });
     }
 
     state.results = fetchedResults;
@@ -1459,6 +1483,8 @@ function buildBulkSearchBody(taCode, indication, page, size, dateRange = {}) {
   return {
     pagination: { page, size },
     sort: { property: 'decisionDate', direction: 'DESC' },
+    ...(dateRange.from ? { decisionDateFrom: dateRange.from } : {}),
+    ...(dateRange.to   ? { decisionDateTo:   dateRange.to   } : {}),
     searchCriteria: {
       containAll: null, containAny: null, containNot: null,
       title: null, number: null, status: null,
@@ -1474,9 +1500,7 @@ function buildBulkSearchBody(taCode, indication, page, size, dateRange = {}) {
       hasSeriousBreach: null, hasUnexpectedEvent: null,
       hasUrgentSafetyMeasure: null, isTransitioned: null,
       eudraCtCode: null, trialRegion: null,
-      vulnerablePopulation: null, mscStatus: null,
-      decisionDateFrom: dateRange.from || null,
-      decisionDateTo: dateRange.to || null
+      vulnerablePopulation: null, mscStatus: null
     }
   };
 }
@@ -1590,11 +1614,12 @@ async function onBulkCTGChange() {
 
   try {
     const phase = els.bulkCTGPhase?.value || '';
+    const ctgCountDate = getDateRangeFromYearFilter(els.bulkCTGYearFilter?.value || '');
 
     const resp = await fetch(`${API_BASE}/api/ctg/bulk-search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ condition, phase, pageSize: 1 })
+      body: JSON.stringify({ condition, phase, dateFrom: ctgCountDate.from, dateTo: ctgCountDate.to, pageSize: 1 })
     });
     if (!resp.ok) throw new Error('Count fetch failed');
 
@@ -2077,7 +2102,25 @@ async function bulkDownloadByTA(arg1 = null) {
 
       session.totalTrials = data.pagination?.totalRecords || 0;
       totalPages          = data.pagination?.totalPages   || 1;
-      const trials        = data.data || [];
+      let trials = data.data || [];
+
+      // Client-side date filter (fallback if API didn't honour top-level params)
+      // Results are sorted DESC by decisionDate, so we can also stop early
+      if (bulkDateRange.from || bulkDateRange.to) {
+        const filtered = [];
+        let hitOldTrial = false;
+        for (const t of trials) {
+          const d = t.decisionDate || t.authorisationDate || t.startDate || '';
+          if (d && bulkDateRange.from && d < bulkDateRange.from) {
+            hitOldTrial = true; // all remaining pages will also be older — stop paginating
+            break;
+          }
+          if (d && bulkDateRange.to && d > bulkDateRange.to) continue; // too new, skip
+          filtered.push(t);
+        }
+        trials = filtered;
+        if (hitOldTrial) totalPages = pageNum; // force loop to stop after this page
+      }
 
       for (const trial of trials) {
         if (state.bulkCancelled) break;
