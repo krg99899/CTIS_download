@@ -189,7 +189,7 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
 
     // Type check: must be exactly 104 (allow both string and number)
     const docTypeStr = String(requestedDoc.documentType).trim();
-    if (docTypeStr !== '104' && docTypeStr !== '104') {
+    if (docTypeStr !== '104') {
       console.warn(`⛔ BLOCKED: Attempted download of non-protocol document [${ctNumber}/${uuid}]. Type: ${requestedDoc.documentType}`);
       return res.status(403).json({ error: 'Only Type 104 (Protocol) documents can be downloaded' });
     }
@@ -197,13 +197,6 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
     // Exclusion check: reject D2, D3, D4, and other excluded types
     if (shouldExcludeDocument(requestedDoc.title, requestedDoc.documentType)) {
       console.warn(`⛔ BLOCKED: Attempted download of excluded document [${ctNumber}/${uuid}]. Type: ${requestedDoc.documentType}, Title: ${requestedDoc.title}`);
-      return res.status(403).json({ error: 'This document type is excluded from downloads' });
-    }
-
-    // Additional check: reject if title contains D2, D3, or D4
-    const titleUpper = (requestedDoc.title || '').toUpperCase();
-    if (['D2', 'D3', 'D4'].some(type => titleUpper.includes(type))) {
-      console.warn(`⛔ BLOCKED: Document title contains excluded type [${ctNumber}/${uuid}]. Title: ${requestedDoc.title}`);
       return res.status(403).json({ error: 'This document type is excluded from downloads' });
     }
 

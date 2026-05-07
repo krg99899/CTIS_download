@@ -2291,19 +2291,13 @@ async function bulkDownloadByTA(arg1 = null) {
             console.log(`[${trial.ctNumber}] Found ${docs.length} total documents. Types: ${docs.map(d => d.documentType).join(', ')}`);
           }
 
-          // STRICT: Type 104 (Protocol), English ONLY, skip D2/D3/D4 and other excluded types
+          // STRICT: Type 104 (Protocol), English ONLY
           const allProtocols   = docs.filter(d => d.documentType === '104' || String(d.documentType) === '104');
-          
-          // Double-check: exclude any document with D2, D3, D4 in title or type
-          const englishDocs    = allProtocols.filter(d => {
-            const isExcluded = shouldExcludeDocument(d.title, d.documentType);
-            const hasExcludedType = ['D2', 'D3', 'D4'].some(type => 
-              String(d.documentType).toUpperCase().includes(type) || 
-              (d.title && d.title.toUpperCase().includes(type))
-            );
-            const isD1WithGreOrTrack = d.documentType === 'D1' && d.title && /(?:GRE|Track)/i.test(d.title);
-            return isEnglishDoc(d) && !isExcluded && !hasExcludedType && !isD1WithGreOrTrack;
-          });
+
+          // English + not excluded (shouldExcludeDocument handles D2/D3/D4 type codes and title patterns)
+          const englishDocs    = allProtocols.filter(d =>
+            isEnglishDoc(d) && !shouldExcludeDocument(d.title, d.documentType)
+          );
           
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;
