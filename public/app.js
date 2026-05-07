@@ -1925,17 +1925,28 @@ async function bulkDownloadByCTG(arg1 = null) {
         let rawDocs = [];
         let trialJson = null;
         let studyStartDate = '';
+        let studyPhase = '';
+        let studySponsor = '';
+        let studyTitle  = study.title || '';
         try {
           const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
           const studyData = await studyResp.json();
           rawDocs = (studyData.documents || []).filter(d => d.url);
           trialJson = studyData.trialJson || null;
-          studyStartDate = studyData.protocolSection?.statusModule?.startDateStruct?.date
-            || studyData.protocolSection?.statusModule?.studyFirstSubmitDate
+          const proto = studyData.protocolSection || {};
+          studyStartDate = proto.statusModule?.startDateStruct?.date
+            || proto.statusModule?.studyFirstSubmitDate
             || '';
+          studyPhase = (proto.designModule?.phases || []).join('/') || '';
+          studySponsor = proto.sponsorCollaboratorsModule?.leadSponsor?.name || '';
+          studyTitle = proto.identificationModule?.officialTitle
+            || proto.identificationModule?.briefTitle
+            || studyTitle;
         } catch (e) {
           console.error(`[${study.nct}] retrieve failed:`, e.message);
         }
+        const ctgYear = extractYear(studyStartDate) || 'Unknown';
+        const ctgStatusBucket = ctgStatusBucketLabel(study.overallStatus);
 
         const englishDocs = rawDocs.filter(d => isEnglishCtgDoc(d));
         const nonEnCount  = rawDocs.length - englishDocs.length;
@@ -1960,6 +1971,20 @@ async function bulkDownloadByCTG(arg1 = null) {
               await streamToFileInDirectory(targetFolder, filename, docResp);
               await dmMarkDownloaded(session.id, study.nct, doc.filename);
               session.downloadedCount++;
+              appendManifestRow(session, {
+                source: 'CTG',
+                trialId: study.nct,
+                filename,
+                phase: studyPhase,
+                year: ctgYear,
+                status: ctgStatusBucket,
+                rawStatus: study.overallStatus || '',
+                sponsor: studySponsor,
+                title: studyTitle,
+                date: studyStartDate,
+                relativePath: relativePathFor(session.folderName, ctgYear, ctgStatusBucket, session.splitByStatus, filename),
+                docType: 'PDF'
+              });
               console.log(`✓ CTG PDF Downloaded: ${filename}`);
             } catch (err) {
               console.error(`Failed CTG doc [${study.nct}/${doc.filename}]:`, err.message);
@@ -1978,6 +2003,20 @@ async function bulkDownloadByCTG(arg1 = null) {
               await writeJsonToDirectory(jsonFolder, jsonFilename, trialJson);
               await dmMarkDownloaded(session.id, study.nct, jsonKey);
               session.jsonOnlyCount++;
+              appendManifestRow(session, {
+                source: 'CTG',
+                trialId: study.nct,
+                filename: jsonFilename,
+                phase: studyPhase,
+                year: ctgYear,
+                status: ctgStatusBucket,
+                rawStatus: study.overallStatus || '',
+                sponsor: studySponsor,
+                title: studyTitle,
+                date: studyStartDate,
+                relativePath: `${session.folderName}/${session.splitByStatus ? `${ctgYear}/${ctgStatusBucket}/` : ''}JSON/${jsonFilename}`,
+                docType: 'USDM-JSON'
+              });
               console.log(`✓ CTG USDM JSON saved: ${jsonFilename}`);
             } catch (err) {
               console.error(`Failed CTG JSON fallback [${study.nct}]:`, err.message);
@@ -2009,6 +2048,7 @@ async function bulkDownloadByCTG(arg1 = null) {
   // Finalise session
   session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
   session.updatedAt = Date.now();
+  await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
   await dmSaveSession(session);
 
   state.downloadCount += session.downloadedCount;
@@ -2275,7 +2315,10 @@ async function bulkDownloadByTA(arg1 = null) {
           if (englishDocs.length === 0) {
             session.skippedCount++;
           } else {
-            const targetFolder = await getYearStatusFolder(taFolder, ctisTrialDate(trial), trial.ctStatus, session.splitByStatus);
+            const trialDateIso = ctisTrialDate(trial);
+            const trialYear    = extractYear(trialDateIso) || 'Unknown';
+            const statusBucket = ctisStatusBucket(trial.ctStatus);
+            const targetFolder = await getYearStatusFolder(taFolder, trialDateIso, trial.ctStatus, session.splitByStatus);
             for (const doc of englishDocs) {
               const alreadyDl = await dmIsDownloaded(session.id, trial.ctNumber, doc.uuid);
               if (alreadyDl) continue;
@@ -2291,6 +2334,20 @@ async function bulkDownloadByTA(arg1 = null) {
                 await streamToFileInDirectory(targetFolder, filename, docResp);
                 await dmMarkDownloaded(session.id, trial.ctNumber, doc.uuid);
                 session.downloadedCount++;
+                appendManifestRow(session, {
+                  source: 'CTIS',
+                  trialId: trial.ctNumber,
+                  filename,
+                  phase: cleanPhase(trial.trialPhase),
+                  year: trialYear,
+                  status: statusBucket,
+                  rawStatus: getStatusLabel(trial.ctStatus),
+                  sponsor: trial.sponsor || '',
+                  title: trial.ctTitle || '',
+                  date: trialDateIso,
+                  relativePath: relativePathFor(session.folderName, trialYear, statusBucket, session.splitByStatus, filename),
+                  docType: 'PDF'
+                });
                 console.log(`✓ Downloaded: ${filename}`);
               } catch (err) {
                 console.error(`Failed to download [${trial.ctNumber}/${doc.uuid}]:`, err.message);
@@ -2320,6 +2377,7 @@ async function bulkDownloadByTA(arg1 = null) {
   // Finalise session
   session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
   session.updatedAt = Date.now();
+  await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
   await dmSaveSession(session);
 
   state.downloadCount += session.downloadedCount;
@@ -2411,6 +2469,7 @@ async function renderDownloadManager() {
           </div>
           <div class="dm-session-actions">
             ${s.status === 'interrupted' ? `<button class="btn-resume" data-session-id="${s.id}">⟳ Resume</button>` : ''}
+            ${(s.manifestRows && s.manifestRows.length) ? `<button class="btn-manifest" data-session-id="${s.id}" title="Download CSV list of every protocol saved in this session">⬇ Manifest CSV</button>` : ''}
             <button class="btn-clear-session" data-session-id="${s.id}" title="Remove session">✕</button>
           </div>
         </div>
@@ -2441,6 +2500,20 @@ async function renderDownloadManager() {
       } else {
         bulkDownloadByTA(session);
       }
+    });
+  });
+
+  // Bind Manifest CSV download buttons
+  list.querySelectorAll('.btn-manifest').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sid = btn.dataset.sessionId;
+      const sessions = await dmGetAllSessions();
+      const session  = sessions.find(s => s.id === sid);
+      if (!session || !session.manifestRows || session.manifestRows.length === 0) {
+        showToast('info', 'No Manifest', 'No downloads recorded for this session yet.');
+        return;
+      }
+      downloadManifestForSession(session);
     });
   });
 
@@ -2549,6 +2622,108 @@ async function getYearStatusFolder(parentFolder, dateStr, status, splitByStatus)
   }
   if (!statusBucket) return yearFolder;
   return yearFolder.getDirectoryHandle(statusBucket, { create: true });
+}
+
+// Map a CTIS numeric status code to the same Ongoing/Completed bucket label
+// used for folder naming, so manifest rows match where the file lives on disk.
+function ctisStatusBucket(code) {
+  if (code === 7) return 'Completed';
+  if (code === 2 || code === 5 || code === 11) return 'Ongoing';
+  return 'Other';
+}
+
+// CTG overall-status string → bucket label.
+function ctgStatusBucketLabel(status) {
+  if (!status) return 'Other';
+  const st = String(status).toUpperCase();
+  if (st === 'COMPLETED') return 'Completed';
+  if (['RECRUITING', 'ACTIVE_NOT_RECRUITING', 'ENROLLING_BY_INVITATION', 'NOT_YET_RECRUITING'].includes(st)) return 'Ongoing';
+  return 'Other';
+}
+
+// CTIS trialPhase strings look like "Phase II (clinical)" — strip the suffix.
+function cleanPhase(p) {
+  if (!p) return '';
+  return String(p).split(' (')[0];
+}
+
+// Forward-slash relative path used in the manifest, mirroring on-disk layout.
+function relativePathFor(folderName, year, statusBucket, splitByStatus, filename) {
+  if (!splitByStatus) return `${folderName}/${filename}`;
+  return `${folderName}/${year}/${statusBucket}/${filename}`;
+}
+
+// Append a row to the in-session manifest. Persisted with the session so a
+// resumed run continues to extend the same list.
+function appendManifestRow(session, row) {
+  if (!Array.isArray(session.manifestRows)) session.manifestRows = [];
+  session.manifestRows.push({ ts: Date.now(), ...row });
+}
+
+// CSV-escape a single cell.
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+// Serialise session.manifestRows to a manifest.csv (and .json) at the TA root.
+// Trigger an in-browser CSV download of a session's manifest, without needing
+// folder-picker permission again. Useful from the Download Manager.
+function downloadManifestForSession(session) {
+  const rows = session.manifestRows || [];
+  const headers = ['Source', 'Trial ID', 'Filename', 'Phase', 'Year', 'Status', 'Raw Status', 'Sponsor', 'Title', 'Date', 'Doc Type', 'Relative Path'];
+  const lines = [headers.join(',')];
+  for (const r of rows) {
+    lines.push([
+      csvCell(r.source), csvCell(r.trialId), csvCell(r.filename), csvCell(r.phase),
+      csvCell(r.year), csvCell(r.status), csvCell(r.rawStatus), csvCell(r.sponsor),
+      csvCell(r.title), csvCell(r.date), csvCell(r.docType), csvCell(r.relativePath)
+    ].join(','));
+  }
+  const csv = '﻿' + lines.join('\r\n'); // BOM so Excel opens UTF-8 cleanly
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${sanitizeFilename(session.folderName || 'manifest')} - manifest.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 0);
+}
+
+async function writeManifest(taFolder, session) {
+  const rows = session.manifestRows || [];
+  if (rows.length === 0) return;
+
+  const headers = ['Source', 'Trial ID', 'Filename', 'Phase', 'Year', 'Status', 'Raw Status', 'Sponsor', 'Title', 'Date', 'Doc Type', 'Relative Path'];
+  const lines = [headers.join(',')];
+  for (const r of rows) {
+    lines.push([
+      csvCell(r.source), csvCell(r.trialId), csvCell(r.filename), csvCell(r.phase),
+      csvCell(r.year), csvCell(r.status), csvCell(r.rawStatus), csvCell(r.sponsor),
+      csvCell(r.title), csvCell(r.date), csvCell(r.docType), csvCell(r.relativePath)
+    ].join(','));
+  }
+  const csv = lines.join('\r\n');
+
+  const csvHandle = await taFolder.getFileHandle('manifest.csv', { create: true });
+  const csvWritable = await csvHandle.createWritable();
+  await csvWritable.write(csv);
+  await csvWritable.close();
+
+  const jsonHandle = await taFolder.getFileHandle('manifest.json', { create: true });
+  const jsonWritable = await jsonHandle.createWritable();
+  await jsonWritable.write(JSON.stringify({
+    sessionId: session.id,
+    source: session.sessionSource === 'ctg' ? 'CTG' : 'CTIS',
+    taLabel: session.taLabel,
+    indication: session.indication || null,
+    folderName: session.folderName,
+    totalDownloads: rows.length,
+    rows
+  }, null, 2));
+  await jsonWritable.close();
 }
 
 function getTherapeuticAreaLabel(code) {
