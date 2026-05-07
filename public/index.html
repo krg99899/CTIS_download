@@ -289,24 +289,7 @@
           </div>
         </div>
 
-        <div class="bulk-selects-row" style="margin-top:0.75rem">
-          <div class="bulk-select-group">
-            <label for="bulkYearFilter">Year / Period
-              <span class="filter-hint">Optional — narrows by decision date</span>
-            </label>
-            <select id="bulkYearFilter">
-              <option value="">Any time</option>
-              <optgroup label="Recent">
-                <option value="last1">Last 1 year</option>
-                <option value="last2">Last 2 years</option>
-                <option value="last3">Last 3 years</option>
-                <option value="last4">Last 4 years</option>
-                <option value="last5">Last 5 years</option>
-              </optgroup>
-              <optgroup label="Specific Year" id="bulkYearOptionsGroup"></optgroup>
-            </select>
-          </div>
-        </div>
+        <select id="bulkYearFilter" hidden><option value=""></option></select>
 
         <div class="bulk-options-row">
           <label class="toggle-chip" title="Skip trials with Suspended status (code 8)">
@@ -317,9 +300,9 @@
             <input type="checkbox" id="bulkExcludeTerminated" checked>
             <span>Exclude Terminated Trials</span>
           </label>
-          <label class="toggle-chip" title="Save Ongoing/Authorised trials into an Ongoing/ subfolder and Completed trials into a Completed/ subfolder">
+          <label class="toggle-chip" title="Group trials by year (sub-folders) and within each year separate Ongoing/Authorised vs Completed">
             <input type="checkbox" id="bulkSplitByStatus" checked>
-            <span>Separate Ongoing / Completed into subfolders</span>
+            <span>Year sub-folders + Ongoing / Completed split</span>
           </label>
         </div>
 
@@ -398,22 +381,7 @@
               <option value="4">Phase 4</option>
             </select>
           </div>
-          <div class="bulk-select-group">
-            <label for="bulkCTGYearFilter">Year / Period
-              <span class="filter-hint">Optional — narrows by start date</span>
-            </label>
-            <select id="bulkCTGYearFilter">
-              <option value="">Any time</option>
-              <optgroup label="Recent">
-                <option value="last1">Last 1 year</option>
-                <option value="last2">Last 2 years</option>
-                <option value="last3">Last 3 years</option>
-                <option value="last4">Last 4 years</option>
-                <option value="last5">Last 5 years</option>
-              </optgroup>
-              <optgroup label="Specific Year" id="bulkCTGYearOptionsGroup"></optgroup>
-            </select>
-          </div>
+          <select id="bulkCTGYearFilter" hidden><option value=""></option></select>
         </div>
 
         <div class="bulk-options-row">
@@ -429,9 +397,9 @@
             <input type="checkbox" id="bulkCTGFallbackJson" checked>
             <span>Fallback to USDM JSON if PDF missing</span>
           </label>
-          <label class="toggle-chip" title="Save Recruiting/Active studies into an Ongoing/ subfolder and Completed studies into a Completed/ subfolder">
+          <label class="toggle-chip" title="Group studies by start year (sub-folders) and within each year separate Recruiting/Active vs Completed">
             <input type="checkbox" id="bulkCTGSplitByStatus" checked>
-            <span>Separate Ongoing / Completed into subfolders</span>
+            <span>Year sub-folders + Ongoing / Completed split</span>
           </label>
         </div>
 

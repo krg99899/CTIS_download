@@ -1749,8 +1749,10 @@ async function bulkDownloadByCTG(arg1 = null) {
   const splitByStatus      = resumeSession ? (resumeSession.splitByStatus ?? true) : (els.bulkCTGSplitByStatus?.checked ?? true);
   const taCode             = resumeSession ? resumeSession.taCode             : (els.bulkCTGTA?.value || null);
   const indication         = resumeSession ? resumeSession.indication         : ((els.bulkCTGIndication && !els.bulkCTGIndication.disabled) ? els.bulkCTGIndication.value.trim() || null : null);
-  const ctgYearFilterVal   = resumeSession ? (resumeSession.yearFilter || '') : (els.bulkCTGYearFilter?.value || '');
-  const ctgBulkDateRange   = getDateRangeFromYearFilter(ctgYearFilterVal);
+  // Period filter intentionally disabled — we always download every available
+  // protocol for the selected TA/Indication and group them by year on disk.
+  const ctgYearFilterVal   = '';
+  const ctgBulkDateRange   = { from: null, to: null };
 
   if (!window.showDirectoryPicker) {
     showToast('error', 'Browser Unsupported', 'Folder picker requires Chrome, Edge, or a Chromium-based browser.');
@@ -1790,7 +1792,7 @@ async function bulkDownloadByCTG(arg1 = null) {
       taCode,
       indication,
       taLabel: displayLabel || condition,
-      folderName: sanitizeFilename(`${folderBase || 'ClinicalTrials-gov'} - ${todayDateString()}`),
+      folderName: sanitizeFilename(folderBase || 'ClinicalTrials-gov'),
       status: 'running',
       totalTrials: 0,
       processedCount: 0,
@@ -1922,11 +1924,15 @@ async function bulkDownloadByCTG(arg1 = null) {
         // reliably, and we also need trialJson for the USDM-fallback path.
         let rawDocs = [];
         let trialJson = null;
+        let studyStartDate = '';
         try {
           const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
           const studyData = await studyResp.json();
           rawDocs = (studyData.documents || []).filter(d => d.url);
           trialJson = studyData.trialJson || null;
+          studyStartDate = studyData.protocolSection?.statusModule?.startDateStruct?.date
+            || studyData.protocolSection?.statusModule?.studyFirstSubmitDate
+            || '';
         } catch (e) {
           console.error(`[${study.nct}] retrieve failed:`, e.message);
         }
@@ -1936,7 +1942,7 @@ async function bulkDownloadByCTG(arg1 = null) {
         session.nonEnCount += nonEnCount;
 
         if (englishDocs.length > 0) {
-          const targetFolder = await getStatusFolder(taFolder, study.overallStatus, session.splitByStatus);
+          const targetFolder = await getYearStatusFolder(taFolder, studyStartDate, study.overallStatus, session.splitByStatus);
           for (const doc of englishDocs) {
             const alreadyDl = await dmIsDownloaded(session.id, study.nct, doc.filename);
             if (alreadyDl) continue;
@@ -1966,7 +1972,7 @@ async function bulkDownloadByCTG(arg1 = null) {
           const alreadyDl = await dmIsDownloaded(session.id, study.nct, jsonKey);
           if (!alreadyDl) {
             try {
-              const statusFolder = await getStatusFolder(taFolder, study.overallStatus, session.splitByStatus);
+              const statusFolder = await getYearStatusFolder(taFolder, studyStartDate, study.overallStatus, session.splitByStatus);
               const jsonFolder   = await statusFolder.getDirectoryHandle('JSON', { create: true });
               const jsonFilename = `${study.nct}.json`;
               await writeJsonToDirectory(jsonFolder, jsonFilename, trialJson);
@@ -2075,8 +2081,10 @@ async function bulkDownloadByTA(arg1 = null) {
   const taLabel           = getTherapeuticAreaLabel(taCode);
   const indication        = resumeSession ? resumeSession.indication
     : (els.bulkIndication && !els.bulkIndication.disabled ? els.bulkIndication.value || null : null);
-  const yearFilterVal     = resumeSession ? (resumeSession.yearFilter || '') : (els.bulkYearFilter?.value || '');
-  const bulkDateRange     = getDateRangeFromYearFilter(yearFilterVal);
+  // Period filter intentionally disabled — we always download every available
+  // protocol for the selected TA/Indication and group them by year on disk.
+  const yearFilterVal     = '';
+  const bulkDateRange     = { from: null, to: null };
 
   state.bulkCancelled = false;
 
@@ -2093,7 +2101,7 @@ async function bulkDownloadByTA(arg1 = null) {
       indication,
       yearFilter: yearFilterVal,
       taLabel,
-      folderName: sanitizeFilename(`${baseLabel} - ${todayDateString()}`),
+      folderName: sanitizeFilename(baseLabel),
       status: 'running',
       excludeSuspended,
       excludeTerminated,
@@ -2267,7 +2275,7 @@ async function bulkDownloadByTA(arg1 = null) {
           if (englishDocs.length === 0) {
             session.skippedCount++;
           } else {
-            const targetFolder = await getStatusFolder(taFolder, trial.ctStatus, session.splitByStatus);
+            const targetFolder = await getYearStatusFolder(taFolder, ctisTrialDate(trial), trial.ctStatus, session.splitByStatus);
             for (const doc of englishDocs) {
               const alreadyDl = await dmIsDownloaded(session.id, trial.ctNumber, doc.uuid);
               if (alreadyDl) continue;
@@ -2506,21 +2514,41 @@ function todayDateString() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// Returns the correct folder handle based on trial status when splitByStatus is on.
-// CTIS: numeric ctStatus (2=Authorised/Ongoing, 5=Ongoing, 7=Completed)
-// CTG:  string overallStatus ('RECRUITING', 'COMPLETED', …)
-async function getStatusFolder(parentFolder, status, splitByStatus) {
+// Extract a 4-digit year from any date-ish string (ISO YYYY-MM-DD, YYYY-MM, YYYY,
+// or DD/MM/YYYY). Returns '' when none can be found.
+function extractYear(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const iso = dateStr.match(/(\d{4})-\d{2}/);
+  if (iso) return iso[1];
+  const dmy = dateStr.match(/\d{2}\/\d{2}\/(\d{4})/);
+  if (dmy) return dmy[1];
+  const y = dateStr.match(/(19|20)\d{2}/);
+  return y ? y[0] : '';
+}
+
+// Returns the folder handle to write into, nesting <Year>/<Completed|Ongoing>
+// when splitByStatus is on. Year is taken from the trial date when available;
+// trials without a date land under "Unknown-Year".
+//   CTIS: numeric ctStatus (2=Authorised, 5=Ongoing, 7=Completed, 11=Submitted)
+//   CTG:  string overallStatus ('RECRUITING', 'COMPLETED', …)
+async function getYearStatusFolder(parentFolder, dateStr, status, splitByStatus) {
   if (!splitByStatus) return parentFolder;
+
+  const year = extractYear(dateStr) || 'Unknown-Year';
+  const yearFolder = await parentFolder.getDirectoryHandle(year, { create: true });
+
+  let statusBucket = null;
   if (typeof status === 'number') {
-    if (status === 7) return parentFolder.getDirectoryHandle('Completed', { create: true });
-    if (status === 2 || status === 5 || status === 11) return parentFolder.getDirectoryHandle('Ongoing', { create: true });
+    if (status === 7) statusBucket = 'Completed';
+    else if (status === 2 || status === 5 || status === 11) statusBucket = 'Ongoing';
   } else if (typeof status === 'string') {
     const st = status.toUpperCase();
-    if (st === 'COMPLETED') return parentFolder.getDirectoryHandle('Completed', { create: true });
-    if (['RECRUITING', 'ACTIVE_NOT_RECRUITING', 'ENROLLING_BY_INVITATION', 'NOT_YET_RECRUITING'].includes(st))
-      return parentFolder.getDirectoryHandle('Ongoing', { create: true });
+    if (st === 'COMPLETED') statusBucket = 'Completed';
+    else if (['RECRUITING', 'ACTIVE_NOT_RECRUITING', 'ENROLLING_BY_INVITATION', 'NOT_YET_RECRUITING'].includes(st))
+      statusBucket = 'Ongoing';
   }
-  return parentFolder;
+  if (!statusBucket) return yearFolder;
+  return yearFolder.getDirectoryHandle(statusBucket, { create: true });
 }
 
 function getTherapeuticAreaLabel(code) {
