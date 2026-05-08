@@ -2285,9 +2285,13 @@ async function bulkDownloadByTA(arg1 = null) {
           const trialData = await trialResp.json();
           const docs = trialData.documents || [];
 
-          // Debug: Log all documents found
+          // Diagnostic — always log so COPD / empty-doc cases are visible in DevTools
+          const docTypes = docs.map(d => d.documentType);
+          const uniqueTypes = [...new Set(docTypes)];
+          console.log(`[CTIS][${trial.ctNumber}] trialData keys: ${Object.keys(trialData).join(', ')}`);
+          console.log(`[CTIS][${trial.ctNumber}] docs.length=${docs.length} uniqueTypes=${JSON.stringify(uniqueTypes)} ctStatus=${trial.ctStatus}`);
           if (docs.length > 0) {
-            console.log(`[${trial.ctNumber}] Found ${docs.length} total documents. Types: ${docs.map(d => d.documentType).join(', ')}`);
+            console.log(`[CTIS][${trial.ctNumber}] sample doc[0]:`, JSON.stringify(docs[0]).slice(0, 300));
           }
 
           // STRICT: Type 104 (Protocol) only
@@ -2611,9 +2615,11 @@ async function getYearStatusFolder(parentFolder, dateStr, status, splitByStatus)
   const yearFolder = await parentFolder.getDirectoryHandle(year, { create: true });
 
   let statusBucket = null;
-  if (typeof status === 'number') {
-    if (status === 7) statusBucket = 'Completed';
-    else if (status === 2 || status === 5 || status === 11) statusBucket = 'Ongoing';
+  const numCode = Number(status);
+  if (!isNaN(numCode) && numCode > 0) {
+    // CTIS numeric status (may arrive as string "7" from API)
+    if (numCode === 7) statusBucket = 'Completed';
+    else if (numCode === 2 || numCode === 5 || numCode === 11) statusBucket = 'Ongoing';
   } else if (typeof status === 'string') {
     const st = status.toUpperCase();
     if (st === 'COMPLETED') statusBucket = 'Completed';
@@ -2627,8 +2633,9 @@ async function getYearStatusFolder(parentFolder, dateStr, status, splitByStatus)
 // Map a CTIS numeric status code to the same Ongoing/Completed bucket label
 // used for folder naming, so manifest rows match where the file lives on disk.
 function ctisStatusBucket(code) {
-  if (code === 7) return 'Completed';
-  if (code === 2 || code === 5 || code === 11) return 'Ongoing';
+  const n = Number(code);
+  if (n === 7) return 'Completed';
+  if (n === 2 || n === 5 || n === 11) return 'Ongoing';
   return 'Other';
 }
 
@@ -2693,12 +2700,28 @@ function downloadManifestForSession(session) {
 }
 
 async function writeManifest(taFolder, session) {
-  const rows = session.manifestRows || [];
-  if (rows.length === 0) return;
+  const newRows = session.manifestRows || [];
+  if (newRows.length === 0) return;
+
+  // Merge with any existing manifest.json so CTG + CTIS sessions accumulate.
+  let existingRows = [];
+  try {
+    const existing = await taFolder.getFileHandle('manifest.json');
+    const text = await (await existing.getFile()).text();
+    existingRows = JSON.parse(text).rows || [];
+  } catch (_) { /* no prior manifest — start fresh */ }
+
+  // Deduplicate by source+trialId+filename
+  const seen = new Set(existingRows.map(r => `${r.source}|${r.trialId}|${r.filename}`));
+  const mergedRows = [...existingRows];
+  for (const r of newRows) {
+    const key = `${r.source}|${r.trialId}|${r.filename}`;
+    if (!seen.has(key)) { seen.add(key); mergedRows.push(r); }
+  }
 
   const headers = ['Source', 'Trial ID', 'Filename', 'Phase', 'Year', 'Status', 'Raw Status', 'Sponsor', 'Title', 'Date', 'Doc Type', 'Relative Path'];
   const lines = [headers.join(',')];
-  for (const r of rows) {
+  for (const r of mergedRows) {
     lines.push([
       csvCell(r.source), csvCell(r.trialId), csvCell(r.filename), csvCell(r.phase),
       csvCell(r.year), csvCell(r.status), csvCell(r.rawStatus), csvCell(r.sponsor),
@@ -2715,13 +2738,11 @@ async function writeManifest(taFolder, session) {
   const jsonHandle = await taFolder.getFileHandle('manifest.json', { create: true });
   const jsonWritable = await jsonHandle.createWritable();
   await jsonWritable.write(JSON.stringify({
-    sessionId: session.id,
-    source: session.sessionSource === 'ctg' ? 'CTG' : 'CTIS',
     taLabel: session.taLabel,
     indication: session.indication || null,
     folderName: session.folderName,
-    totalDownloads: rows.length,
-    rows
+    totalDownloads: mergedRows.length,
+    rows: mergedRows
   }, null, 2));
   await jsonWritable.close();
 }
