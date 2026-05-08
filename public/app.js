@@ -2296,28 +2296,38 @@ async function bulkDownloadByTA(arg1 = null) {
         try {
           const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${trial.ctNumber}`);
           const trialData = await trialResp.json();
-          const docs = trialData.documents || [];
+          // CTIS stores docs at top-level or nested inside authorizedPartI / partI
+          const docs = trialData.documents
+            || trialData.authorizedPartI?.documents
+            || trialData.partI?.documents
+            || [];
 
-          // Diagnostic — always log so COPD / empty-doc cases are visible in DevTools
-          const docTypes = docs.map(d => d.documentType);
-          const uniqueTypes = [...new Set(docTypes)];
-          console.log(`[CTIS][${trial.ctNumber}] trialData keys: ${Object.keys(trialData).join(', ')}`);
-          console.log(`[CTIS][${trial.ctNumber}] docs.length=${docs.length} uniqueTypes=${JSON.stringify(uniqueTypes)} ctStatus=${trial.ctStatus}`);
+          // Diagnostic — always visible in DevTools
+          const uniqueTypes = [...new Set(docs.map(d => String(d.documentType)))];
+          const uniqueLangs = [...new Set(docs.map(d => d.language || 'null'))];
+          console.log(`[CTIS][${trial.ctNumber}] keys=${Object.keys(trialData).join(',')} docs=${docs.length} types=${JSON.stringify(uniqueTypes)} langs=${JSON.stringify(uniqueLangs)} status=${trial.ctStatus}`);
           if (docs.length > 0) {
             console.log(`[CTIS][${trial.ctNumber}] sample doc[0]:`, JSON.stringify(docs[0]).slice(0, 300));
           }
 
-          // STRICT: Type 104 (Protocol) only
-          const allProtocols   = docs.filter(d => d.documentType === '104' || String(d.documentType) === '104');
+          // Type 104 = Protocol. If none found but other types exist, include all
+          // and let the server validate — this catches transitioned EudraCT trials
+          // that may use a different type code.
+          let allProtocols = docs.filter(d => d.documentType === '104' || String(d.documentType) === '104');
+          if (allProtocols.length === 0 && docs.length > 0) {
+            console.warn(`[CTIS][${trial.ctNumber}] No type-104 docs found (types: ${uniqueTypes.join(',')}). Trying all types — server will validate.`);
+            allProtocols = docs;
+          }
 
-          // Reject only if CTIS API explicitly marks language as non-English.
-          // Do NOT use title-marker heuristics here — compound names like AZD2115,
-          // region annotations like "(GR)" in sponsor titles, etc. cause false drops.
-          // The server's pdf-parse content check is the real language gate.
-          const englishDocs    = allProtocols.filter(d => {
+          // Language filter: only hard-reject when CTIS explicitly tags a doc as
+          // a specific non-English language (de, fr, es, …).
+          // 'mul' / 'multilingual' = EU multilingual submission — the PDF content
+          // may be English; the server's pdf-parse check is the real gate.
+          const englishDocs = allProtocols.filter(d => {
             if (d.language) {
               const lang = d.language.toLowerCase().trim();
-              if (!lang.startsWith('en') && lang !== 'eng') return false;
+              const isMul = lang === 'mul' || lang === 'multi' || lang.startsWith('multilingual');
+              if (!isMul && !lang.startsWith('en') && lang !== 'eng') return false;
             }
             return !shouldExcludeDocument(d.title, d.documentType);
           });

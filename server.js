@@ -175,6 +175,35 @@ app.get('/api/retrieve/:ctNumber', async (req, res) => {
   }
 });
 
+// ─── Debug: inspect raw CTIS API structure for a trial ──
+// GET /api/debug-trial/2024-511730-12-00  → shows keys, doc types, languages
+app.get('/api/debug-trial/:ctNumber', async (req, res) => {
+  try {
+    const { ctNumber } = req.params;
+    const response = await fetch(`${CTIS_API}/retrieve/${ctNumber}`, {
+      method: 'GET',
+      headers: { ...CTIS_HEADERS, 'Referer': `https://euclinicaltrials.eu/ctis-public/view/${ctNumber}?lang=en` }
+    });
+    const data = await response.json();
+    const topKeys = Object.keys(data);
+    const docs = data.documents || data.authorizedPartI?.documents || data.partI?.documents || [];
+    const summary = {
+      ctNumber: data.ctNumber,
+      ctStatus: data.ctStatus,
+      topLevelKeys: topKeys,
+      documentsAtTopLevel: Array.isArray(data.documents) ? data.documents.length : typeof data.documents,
+      documentsInAuthorizedPartI: Array.isArray(data.authorizedPartI?.documents) ? data.authorizedPartI.documents.length : 'N/A',
+      totalDocuments: docs.length,
+      docTypes: [...new Set(docs.map(d => String(d.documentType)))],
+      docLanguages: [...new Set(docs.map(d => d.language || 'null'))],
+      docs: docs.map(d => ({ uuid: d.uuid, title: d.title, documentType: d.documentType, language: d.language }))
+    };
+    res.json(summary);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Download document — Type 104 (Protocol) Only ────
 // Validates document type BEFORE downloading — only allows Type 104 protocols
 app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
@@ -191,14 +220,20 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
       }
     });
     const trialData = await trialResp.json();
-    const docs = trialData.documents || [];
-    const requestedDoc = docs.find(d => d.uuid === uuid);
+    // CTIS stores documents at different paths depending on trial type/version.
+    // Check top-level first, then fall back to authorizedPartI / partI nesting.
+    const allDocs = trialData.documents
+      || trialData.authorizedPartI?.documents
+      || trialData.partI?.documents
+      || [];
+    const requestedDoc = allDocs.find(d => d.uuid === uuid);
 
     if (!requestedDoc) {
+      console.warn(`⛔ NOT FOUND: UUID ${uuid} not in docs (${allDocs.length} docs from keys: ${Object.keys(trialData).join(',')})`);
       return res.status(404).json({ error: 'Document not found in trial' });
     }
 
-    // Type check: must be exactly 104 (allow both string and number)
+    // Type check: must be type 104 (Protocol). Allow both string and number forms.
     const docTypeStr = String(requestedDoc.documentType).trim();
     if (docTypeStr !== '104') {
       console.warn(`⛔ BLOCKED: Attempted download of non-protocol document [${ctNumber}/${uuid}]. Type: ${requestedDoc.documentType}`);
@@ -256,21 +291,30 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
     }
 
     // Step 3 — Language check
-    // Trust CTIS API language metadata first (fast, no PDF parse needed).
+    // CTIS often tags multilingual EU submissions as 'mul'. These docs may well
+    // be the English version — we cannot know from the tag alone. For explicitly
+    // non-English metadata (de, fr, es, …) we reject immediately; for 'mul',
+    // untagged, or explicit English we validate by PDF content.
     const ctisLang = (requestedDoc.language || '').toLowerCase().trim();
-    if (ctisLang && !ctisLang.startsWith('en') && ctisLang !== 'eng') {
+    const isMul = ctisLang === 'mul' || ctisLang === 'multi' || ctisLang.startsWith('multilingual');
+    const isExplicitEn = ctisLang && (ctisLang.startsWith('en') || ctisLang === 'eng');
+    const isExplicitNonEn = ctisLang && !isMul && !isExplicitEn;
+
+    if (isExplicitNonEn) {
       console.warn(`⛔ LANG-META-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — CTIS language: ${requestedDoc.language}`);
       return res.status(403).json({ error: 'Non-English protocol — only English-language protocols are downloaded' });
     }
 
-    // Fall back to PDF content check only when CTIS metadata has no language set.
-    if (!ctisLang) {
+    // For 'mul', untagged, or explicit English run the PDF content check.
+    // (Explicit English still gets checked — it costs ~100 ms and catches
+    //  mislabelled documents; skip if performance becomes a concern.)
+    if (!isExplicitEn) {
       const langResult = await isEnglishProtocol(pdfBuffer);
       if (!langResult.isEnglish) {
-        console.warn(`⛔ LANG-PDF-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+        console.warn(`⛔ LANG-PDF-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — lang=${ctisLang}, the=${langResult.theRatio}, headers=${langResult.headerHits}`);
         return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
       }
-      console.log(`✓ PDF lang-check passed [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+      console.log(`✓ PDF lang-check passed [${ctNumber}/${uuid}] — lang=${ctisLang}, the=${langResult.theRatio}, headers=${langResult.headerHits}`);
     }
 
     const byteLength = pdfBuffer.length;
