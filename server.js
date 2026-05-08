@@ -37,19 +37,31 @@ const CTIS_API = 'https://euclinicaltrials.eu/ctis-public-api';
 
 // Excluded Document Type Codes
 // Document type numbers to completely block
-const EXCLUDED_DOC_TYPES = ['D2', 'D3', 'D4'];  // D2/D3/D4 = Patient-facing documents
+// CTIS API may return D2/D3/D4 category codes as strings; also checked by title below.
+const EXCLUDED_DOC_TYPES = ['D2', 'D3', 'D4'];
 
-// Excluded Document Types (by title pattern)
-// Documents matching these patterns will be rejected
+// Documents matching these title patterns are excluded regardless of type code.
 const EXCLUDED_DOC_PATTERNS = [
+  // D4 — Investigator's Brochure
+  /investigator.?s?\s*brochure/i,
+  /\bIB\b.*brochure|brochure.*\bIB\b/i,
+  // D3 — Patient / Subject information & consent
+  /patient.?information.?(?:sheet|leaflet|booklet)/i,
+  /subject.?information.?(?:sheet|leaflet|booklet)/i,
+  /informed.?consent.?form/i,
+  /\bICF\b/i,
+  /participant.?information/i,
+  /assent.?form/i,
+  // Existing D2/D3-adjacent patterns
   /patient.?facing/i,
+  /patient.?facing.?material/i,
   /eDiary|e-diary/i,
   /subject.?questionnaire/i,
   /home.?supply.?position/i,
   /home.?supply|supply.?position/i,
-  /patient.?facing.?material/i,
-  /_GR(?:[_-]|$)/i,  // Greek filenames (_GR- / _GR at end)
-  /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i  // D1 documents with GRE or Track
+  // Greek-locale filenames
+  /_GR(?:[_-]|$)/i,
+  /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i
 ];
 
 function shouldExcludeDocument(docTitle, docTypeCode) {
