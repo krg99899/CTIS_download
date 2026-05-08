@@ -22,8 +22,7 @@ const EXCLUDED_DOC_PATTERNS = [
   /home.?supply.?position/i,
   /home.?supply|supply.?position/i,
   /patient.?facing.?material/i,
-  /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
-  /\bGR\b/i,         // Greek language protocols (standalone GR)
+  /_GR(?:[_-]|$)/i,  // Greek filenames (_GR- / _GR at end)
   /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i  // D1 documents with GRE or Track
 ];
 
@@ -2291,13 +2290,20 @@ async function bulkDownloadByTA(arg1 = null) {
             console.log(`[${trial.ctNumber}] Found ${docs.length} total documents. Types: ${docs.map(d => d.documentType).join(', ')}`);
           }
 
-          // STRICT: Type 104 (Protocol), English ONLY
+          // STRICT: Type 104 (Protocol) only
           const allProtocols   = docs.filter(d => d.documentType === '104' || String(d.documentType) === '104');
 
-          // English + not excluded (shouldExcludeDocument handles D2/D3/D4 type codes and title patterns)
-          const englishDocs    = allProtocols.filter(d =>
-            isEnglishDoc(d) && !shouldExcludeDocument(d.title, d.documentType)
-          );
+          // Reject only if CTIS API explicitly marks language as non-English.
+          // Do NOT use title-marker heuristics here — compound names like AZD2115,
+          // region annotations like "(GR)" in sponsor titles, etc. cause false drops.
+          // The server's pdf-parse content check is the real language gate.
+          const englishDocs    = allProtocols.filter(d => {
+            if (d.language) {
+              const lang = d.language.toLowerCase().trim();
+              if (!lang.startsWith('en') && lang !== 'eng') return false;
+            }
+            return !shouldExcludeDocument(d.title, d.documentType);
+          });
           
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;

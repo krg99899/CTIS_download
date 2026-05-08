@@ -48,8 +48,7 @@ const EXCLUDED_DOC_PATTERNS = [
   /home.?supply.?position/i,
   /home.?supply|supply.?position/i,
   /patient.?facing.?material/i,
-  /_GR(?:[_-]|$)/i,  // Greek language protocols (filename contains _GR)
-  /\bGR\b/i,         // Greek language protocols (standalone GR)
+  /_GR(?:[_-]|$)/i,  // Greek filenames (_GR- / _GR at end)
   /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i  // D1 documents with GRE or Track
 ];
 
@@ -64,41 +63,41 @@ function shouldExcludeDocument(docTitle, docTypeCode) {
 }
 
 // ─── English Protocol Language Detector ──────────────────
-// Uses pdf-parse on the first 3 pages only (fast).
-// Two signals:
-//   1. "the" frequency — virtually unique to English among EU languages
-//   2. English-only clinical section headers
-// On parse failure the file is allowed through (benefit of the doubt).
+// Scans the first 6 pages (covers cover page + ToC + abbreviations + intro).
+// Three signals:
+//   1. English-only clinical section headers (primary — most reliable)
+//   2. "the" frequency — virtually absent in all EU non-English languages
+//   3. Benefit of the doubt for scanned/image PDFs
+// On parse failure the file is allowed through.
 async function isEnglishProtocol(buffer) {
   try {
-    const data = await pdfParse(buffer, { max: 3 });
+    const data = await pdfParse(buffer, { max: 6 });
     const text = (data.text || '').toLowerCase();
 
     if (text.length < 80) {
-      // Scanned / image-only PDF — can't check, allow
       return { isEnglish: true, reason: 'no extractable text' };
     }
 
     const wordCount = text.split(/\s+/).length;
 
-    // "the" is virtually absent as an article in French, German, Spanish,
-    // Italian, Dutch, Polish, Greek, etc.
     const theCount = (text.match(/\bthe\b/g) || []).length;
     const theRatio = theCount / Math.max(wordCount, 1);
 
-    // Section headers that exist only in English clinical protocols
     const englishHeaders = [
       'eligibility criteria', 'inclusion criteria', 'exclusion criteria',
       'schedule of activities', 'informed consent', 'study design',
       'primary endpoint', 'secondary endpoint', 'primary objective',
       'secondary objective', 'study population', 'statistical analysis',
       'protocol synopsis', 'clinical study protocol', 'clinical trial protocol',
+      'background and rationale', 'investigational product', 'adverse events',
+      'serious adverse event', 'concomitant medication', 'dose and administration',
+      'stopping rules', 'sample size', 'randomisation', 'randomization',
     ];
     const headerHits = englishHeaders.filter(h => text.includes(h)).length;
 
-    // Accept if "the" frequency is typical of English (>2 % of words, ≥5 hits)
-    // OR at least 2 English-only section headers are present
-    const isEnglish = (theRatio > 0.02 && theCount >= 5) || headerHits >= 2;
+    // Accept if ≥1 English section header found (robust for dense technical docs)
+    // OR "the" frequency is typical of English prose (>1.5% of words, ≥5 hits)
+    const isEnglish = headerHits >= 1 || (theRatio > 0.015 && theCount >= 5);
 
     return { isEnglish, theRatio: theRatio.toFixed(4), theCount, headerHits };
   } catch (err) {
@@ -244,15 +243,26 @@ app.get('/api/document/:ctNumber/:uuid', async (req, res) => {
       throw fetchErr;
     }
 
-    // Step 3 — Language check: English only
-    const langResult = await isEnglishProtocol(pdfBuffer);
-    if (!langResult.isEnglish) {
-      console.warn(`⛔ LANG-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
-      return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
+    // Step 3 — Language check
+    // Trust CTIS API language metadata first (fast, no PDF parse needed).
+    const ctisLang = (requestedDoc.language || '').toLowerCase().trim();
+    if (ctisLang && !ctisLang.startsWith('en') && ctisLang !== 'eng') {
+      console.warn(`⛔ LANG-META-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — CTIS language: ${requestedDoc.language}`);
+      return res.status(403).json({ error: 'Non-English protocol — only English-language protocols are downloaded' });
+    }
+
+    // Fall back to PDF content check only when CTIS metadata has no language set.
+    if (!ctisLang) {
+      const langResult = await isEnglishProtocol(pdfBuffer);
+      if (!langResult.isEnglish) {
+        console.warn(`⛔ LANG-PDF-BLOCKED: Non-English protocol [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
+        return res.status(403).json({ error: 'Non-English protocol detected — only English-language protocols are downloaded' });
+      }
+      console.log(`✓ PDF lang-check passed [${ctNumber}/${uuid}] — the=${langResult.theRatio}, headers=${langResult.headerHits}`);
     }
 
     const byteLength = pdfBuffer.length;
-    console.log(`✓ Serving English Protocol PDF [${ctNumber}/${uuid}] — ${byteLength} bytes (the=${langResult.theRatio}, headers=${langResult.headerHits})`);
+    console.log(`✓ Serving English Protocol PDF [${ctNumber}/${uuid}] — ${byteLength} bytes (lang=${requestedDoc.language || 'unknown'})`);
 
     const contentType = fileResponse.headers.get('content-type') || 'application/pdf';
     res.setHeader('Content-Type', contentType);
