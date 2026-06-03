@@ -1092,11 +1092,11 @@ function renderModal(data, id, source) {
   const info = data.authorizedPartI || {};
   const docs = data.documents || [];
   // STRICT: Protocol only (type 104), English, and not excluded types
-  const protocolDocs = docs.filter(d => 
-    d.documentType === '104' && 
-    isEnglishDoc(d) && 
+  const protocolDocs = preferCleanDocs(docs.filter(d =>
+    d.documentType === '104' &&
+    isEnglishDoc(d) &&
     !shouldExcludeDocument(d.title, d.documentType)
-  );
+  ));
 
   const taLabel = (info.partOneTherapeuticAreas || '').replace(/Diseases \[C\] - /g, '').replace(/ \[C\d+\]/g, '') || 'Not specified';
 
@@ -1295,7 +1295,7 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
       trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${id}`);
       trialData = await trialResp.json();
       const allDocs = (trialData.documents || []).filter(d => d.url);
-      docs = allDocs.filter(d => isEnglishCtgDoc(d));
+      docs = preferCleanDocs(allDocs.filter(d => isEnglishCtgDoc(d)));
       const fallbackJson = els.bulkCTGFallbackJson?.checked ?? true;
 
       const trialDirHandle = await dirHandle.getDirectoryHandle(id, { create: true });
@@ -1362,11 +1362,11 @@ async function quickDownloadProtocols(id, therapeuticArea, btnEl, source) {
     trialData = await trialResp.json();
     docs = trialData.documents || [];
 
-    docs = docs.filter(d =>
+    docs = preferCleanDocs(docs.filter(d =>
       d.documentType === '104' &&
       isEnglishDoc(d) &&
       !shouldExcludeDocument(d.title, d.documentType)
-    );
+    ));
 
     if (docs.length === 0) {
       btnEl.innerHTML = 'No protocols';
@@ -1465,7 +1465,7 @@ async function batchDownloadVisible() {
         // ClinicalTrials.gov: fetch study details — returns PDFs + USDM trialJson
         const trialResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${trialId}`);
         const trialData = await trialResp.json();
-        const docs = (trialData.documents || []).filter(d => d.url && isEnglishCtgDoc(d));
+        const docs = preferCleanDocs((trialData.documents || []).filter(d => d.url && isEnglishCtgDoc(d)));
         const trialDirHandle = await dirHandle.getDirectoryHandle(trialId, { create: true });
 
         if (docs.length > 0) {
@@ -1493,11 +1493,11 @@ async function batchDownloadVisible() {
         const trialResp = await fetchWithRetry(`${API_BASE}/api/retrieve/${trialId}`);
         const trialData = await trialResp.json();
         const docs = trialData.documents || [];
-        const protocolDocs = docs.filter(d =>
+        const protocolDocs = preferCleanDocs(docs.filter(d =>
           d.documentType === '104' &&
           isEnglishDoc(d) &&
           !shouldExcludeDocument(d.title, d.documentType)
-        );
+        ));
 
         if (protocolDocs.length === 0) {
           skipped++;
@@ -1997,7 +1997,7 @@ async function bulkDownloadByCTG(arg1 = null) {
         const ctgYear = extractYear(studyStartDate) || 'Unknown';
         const ctgStatusBucket = ctgStatusBucketLabel(study.overallStatus);
 
-        const englishDocs = rawDocs.filter(d => isEnglishCtgDoc(d));
+        const englishDocs = preferCleanDocs(rawDocs.filter(d => isEnglishCtgDoc(d)));
         const nonEnCount  = rawDocs.length - englishDocs.length;
         session.nonEnCount += nonEnCount;
 
@@ -2360,15 +2360,15 @@ async function bulkDownloadByTA(arg1 = null) {
           // a specific non-English language (de, fr, es, …).
           // 'mul' / 'multilingual' = EU multilingual submission — the PDF content
           // may be English; the server's pdf-parse check is the real gate.
-          const englishDocs = allProtocols.filter(d => {
+          const englishDocs = preferCleanDocs(allProtocols.filter(d => {
             if (d.language) {
               const lang = d.language.toLowerCase().trim();
               const isMul = lang === 'mul' || lang === 'multi' || lang.startsWith('multilingual');
               if (!isMul && !lang.startsWith('en') && lang !== 'eng') return false;
             }
             return !shouldExcludeDocument(d.title, d.documentType);
-          });
-          
+          }));
+
           const nonEnCount     = allProtocols.length - englishDocs.length;
           session.nonEnCount  += nonEnCount;
 
@@ -2904,6 +2904,36 @@ function isEnglishCtgDoc(doc) {
   if (/DEVICE.?DOSSIER|INVESTIGATIONAL.?DEVICE|DEVICE.?DESCRIPTION/.test(text)) return false;
 
   return true;
+}
+
+// Given a set of protocol docs, drop track-changes versions when a clean copy
+// of the same document exists in the same set.  If no clean copy is found for
+// a particular track-changes doc, it is kept (better than nothing).
+// Works for both CTG (label/filename) and CTIS (title) doc shapes.
+function preferCleanDocs(docs) {
+  const TRACK_RE = /track.?changes?|tracked.?changes?|redline[ds]?|mark(?:ed)?.?up\s*version/i;
+  const isTC = d => TRACK_RE.test([d.title, d.label, d.filename].filter(Boolean).join(' '));
+
+  const trackDocs = docs.filter(isTC);
+  if (trackDocs.length === 0) return docs;
+
+  const cleanDocs = docs.filter(d => !isTC(d));
+  if (cleanDocs.length === 0) return docs; // No clean copy available — keep all
+
+  const strip = s => (s || '')
+    .replace(/[-_\s]*(?:track.?changes?|tracked.?changes?|redline[ds]?|mark(?:ed)?.?up\s*version)[-_\s]*/gi, '')
+    .replace(/\.pdf$/i, '').replace(/[-_.\s]+/g, ' ').trim().toLowerCase();
+
+  const cleanNorms = cleanDocs.map(d => strip(d.title || d.label || d.filename || ''));
+
+  // Retain a track-changes doc only when its stripped title has no overlap with any clean title
+  const orphans = trackDocs.filter(d => {
+    const tn = strip(d.title || d.label || d.filename || '');
+    if (tn.length < 4) return false; // too short to match reliably — drop it
+    return !cleanNorms.some(cn => cn === tn || cn.includes(tn) || tn.includes(cn));
+  });
+
+  return [...cleanDocs, ...orphans];
 }
 
 function sleep(ms) {
