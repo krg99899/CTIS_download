@@ -27,13 +27,31 @@ const EXCLUDED_DOC_PATTERNS = [
   /\bICF\b/i,
   /participant.?information/i,
   /assent.?form/i,
-  // Existing D2/D3-adjacent patterns
+  // Signature / approval pages (standalone pages, not full protocols)
+  /signature.?page/i,
+  /signatory.?page/i,
+  /cover.?(?:and.?)?signature/i,
+  /approval.?(?:page|sheet|form)/i,
+  /sign.?off.?sheet/i,
+  // Additional patient-facing & non-protocol materials
+  /patient.?diary|diary.?card/i,
+  /wallet.?card/i,
+  /alert.?card/i,
+  /patient.?reminder|subject.?reminder/i,
+  /caregiver.?(?:information|guide|material)/i,
+  /carer.?(?:information|guide|material)/i,
+  /lay.?summary/i,
+  /plain.?language.?summary/i,
   /patient.?facing/i,
   /patient.?facing.?material/i,
   /eDiary|e-diary/i,
   /subject.?questionnaire/i,
   /home.?supply.?position/i,
   /home.?supply|supply.?position/i,
+  // Medical device documents
+  /device.?dossier/i,
+  /investigational.?device/i,
+  /device.?description/i,
   // Greek-locale filenames
   /_GR(?:[_-]|$)/i,
   /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i
@@ -1940,12 +1958,14 @@ async function bulkDownloadByCTG(arg1 = null) {
         let studyPhase = '';
         let studySponsor = '';
         let studyTitle  = study.title || '';
+        let ctgDesignMod = {};
         try {
           const studyResp = await fetchWithRetry(`${API_BASE}/api/ctg/retrieve/${study.nct}`);
           const studyData = await studyResp.json();
           rawDocs = (studyData.documents || []).filter(d => d.url);
           trialJson = studyData.trialJson || null;
           const proto = studyData.protocolSection || {};
+          ctgDesignMod = proto.designModule || {};
           studyStartDate = proto.statusModule?.startDateStruct?.date
             || proto.statusModule?.studyFirstSubmitDate
             || '';
@@ -1957,6 +1977,23 @@ async function bulkDownloadByCTG(arg1 = null) {
         } catch (e) {
           console.error(`[${study.nct}] retrieve failed:`, e.message);
         }
+
+        // Skip non-drug/biologic studies: observational, device-only, behavioral, etc.
+        // Only filter when we have definitive type info (don't skip if retrieve failed).
+        const ctgStudyType = (ctgDesignMod.studyType || '').toUpperCase();
+        const ctgInterventionTypes = (ctgDesignMod.interventionTypes || []).map(t => t.toUpperCase());
+        const PHARMA_TYPES = ['DRUG', 'BIOLOGICAL', 'COMBINATION_PRODUCT', 'GENETIC'];
+        const isObservational = ctgStudyType === 'OBSERVATIONAL';
+        const isDeviceOnly = ctgInterventionTypes.length > 0 && !ctgInterventionTypes.some(t => PHARMA_TYPES.includes(t));
+        if (isObservational || isDeviceOnly) {
+          console.log(`[CTG][${study.nct}] Skipped — studyType=${ctgStudyType} interventionTypes=${JSON.stringify(ctgInterventionTypes)}`);
+          session.skippedCount++;
+          session.processedCount++;
+          await dmMarkProcessed(session.id, study.nct);
+          updateOverlay();
+          continue;
+        }
+
         const ctgYear = extractYear(studyStartDate) || 'Unknown';
         const ctgStatusBucket = ctgStatusBucketLabel(study.overallStatus);
 
@@ -2849,10 +2886,22 @@ function isEnglishCtgDoc(doc) {
   if (nonEnMarkers.some(m => text.includes(m))) return false;
 
   // Content-type exclusions — skip clarification docs and ELL packages.
-  // 'CLARIFICATION' is safe as substring. 'ELL' must be word-bounded to
-  // avoid false positives like SELL, CELLULAR, BELL, WELL, etc.
   if (text.includes('CLARIFICATION')) return false;
   if (/(^|[\s._\-()\[\]/\\])ELL($|[\s._\-()\[\]/\\])/.test(text)) return false;
+
+  // Signature / approval pages
+  if (/SIGNATURE.?PAGE|SIGNATORY.?PAGE|COVER.?(?:AND.?)?SIGNATURE|APPROVAL.?(?:PAGE|SHEET|FORM)|SIGN.?OFF.?SHEET/.test(text)) return false;
+
+  // Patient-facing & non-protocol materials (mirrors EXCLUDED_DOC_PATTERNS)
+  if (/INVESTIGATOR.?S?\s*BROCHURE/.test(text)) return false;
+  if (/INFORMED.?CONSENT.?FORM|\bICF\b/.test(text)) return false;
+  if (/PATIENT.?INFORMATION.?(?:SHEET|LEAFLET|BOOKLET)/.test(text)) return false;
+  if (/SUBJECT.?INFORMATION.?(?:SHEET|LEAFLET|BOOKLET)/.test(text)) return false;
+  if (/PARTICIPANT.?INFORMATION|ASSENT.?FORM/.test(text)) return false;
+  if (/PATIENT.?DIARY|DIARY.?CARD|WALLET.?CARD|ALERT.?CARD/.test(text)) return false;
+  if (/LAY.?SUMMARY|PLAIN.?LANGUAGE.?SUMMARY/.test(text)) return false;
+  if (/CAREGIVER.?(?:INFORMATION|GUIDE)|CARER.?(?:INFORMATION|GUIDE)/.test(text)) return false;
+  if (/DEVICE.?DOSSIER|INVESTIGATIONAL.?DEVICE|DEVICE.?DESCRIPTION/.test(text)) return false;
 
   return true;
 }

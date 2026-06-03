@@ -52,13 +52,31 @@ const EXCLUDED_DOC_PATTERNS = [
   /\bICF\b/i,
   /participant.?information/i,
   /assent.?form/i,
-  // Existing D2/D3-adjacent patterns
+  // Signature / approval pages
+  /signature.?page/i,
+  /signatory.?page/i,
+  /cover.?(?:and.?)?signature/i,
+  /approval.?(?:page|sheet|form)/i,
+  /sign.?off.?sheet/i,
+  // Additional patient-facing & non-protocol materials
+  /patient.?diary|diary.?card/i,
+  /wallet.?card/i,
+  /alert.?card/i,
+  /patient.?reminder|subject.?reminder/i,
+  /caregiver.?(?:information|guide|material)/i,
+  /carer.?(?:information|guide|material)/i,
+  /lay.?summary/i,
+  /plain.?language.?summary/i,
   /patient.?facing/i,
   /patient.?facing.?material/i,
   /eDiary|e-diary/i,
   /subject.?questionnaire/i,
   /home.?supply.?position/i,
   /home.?supply|supply.?position/i,
+  // Medical device documents
+  /device.?dossier/i,
+  /investigational.?device/i,
+  /device.?description/i,
   // Greek-locale filenames
   /_GR(?:[_-]|$)/i,
   /D1.*(?:GRE|Track)|(?:GRE|Track).*D1/i
