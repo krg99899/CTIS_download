@@ -137,6 +137,7 @@ const state = {
   filtersOpen: false,
   directoryHandle: null,
   bulkCancelled: false,
+  bulkAborted: false,
   currentSource: 'ctis'  // 'ctis' or 'ctg'
 };
 
@@ -1799,6 +1800,7 @@ async function bulkDownloadByCTG(arg1 = null) {
   if (!dirHandle) return;
 
   state.bulkCancelled = false;
+  state.bulkAborted   = false;
 
   let session;
   if (resumeSession) {
@@ -1881,15 +1883,28 @@ async function bulkDownloadByCTG(arg1 = null) {
           <span class="batch-stat-label">Failed</span>
         </div>
       </div>
-      <button class="btn-cancel-bulk" id="btnCancelBulk">Cancel</button>
+      <div class="bulk-overlay-actions">
+        <button class="btn-pause-bulk" id="btnPauseBulk">⏸ Pause</button>
+        <button class="btn-cancel-bulk" id="btnCancelBulk">✕ Stop</button>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
 
+  overlay.querySelector('#btnPauseBulk').addEventListener('click', () => {
+    state.bulkCancelled = true;
+    overlay.querySelector('#btnPauseBulk').disabled = true;
+    overlay.querySelector('#btnCancelBulk').disabled = true;
+    overlay.querySelector('#btnPauseBulk').textContent = 'Pausing…';
+    overlay.querySelector('#bpSubtitle').textContent = 'Pausing — finishing current study…';
+  });
+
   overlay.querySelector('#btnCancelBulk').addEventListener('click', () => {
     state.bulkCancelled = true;
+    state.bulkAborted   = true;
+    overlay.querySelector('#btnPauseBulk').disabled = true;
     overlay.querySelector('#btnCancelBulk').disabled = true;
-    overlay.querySelector('#btnCancelBulk').textContent = 'Cancelling…';
-    overlay.querySelector('#bpSubtitle').textContent = 'Cancelling — finishing current study…';
+    overlay.querySelector('#btnCancelBulk').textContent = 'Stopping…';
+    overlay.querySelector('#bpSubtitle').textContent = 'Stopping — finishing current study…';
   });
 
   function updateOverlay() {
@@ -2095,35 +2110,48 @@ async function bulkDownloadByCTG(arg1 = null) {
   }
 
   // Finalise session
-  session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
-  session.updatedAt = Date.now();
-  await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
-  await dmSaveSession(session);
+  if (state.bulkAborted) {
+    await dmDeleteSession(session.id);
+  } else {
+    session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
+    session.updatedAt = Date.now();
+    await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
+    await dmSaveSession(session);
+  }
 
   state.downloadCount += session.downloadedCount;
   if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
 
-  const summaryMsg = state.bulkCancelled
-    ? `Cancelled — ${session.downloadedCount} PDFs + ${session.jsonOnlyCount || 0} JSON saved. Click Resume to continue.`
-    : `${session.downloadedCount} PDFs • ${session.jsonOnlyCount || 0} USDM JSON • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
+  const summaryMsg = state.bulkAborted
+    ? `Stopped — ${session.downloadedCount} PDFs + ${session.jsonOnlyCount || 0} JSON saved. Session discarded.`
+    : state.bulkCancelled
+      ? `Paused — ${session.downloadedCount} PDFs + ${session.jsonOnlyCount || 0} JSON saved. Click Resume to continue.`
+      : `${session.downloadedCount} PDFs • ${session.jsonOnlyCount || 0} USDM JSON • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
 
   showToast(
-    state.bulkCancelled ? 'info' : 'success',
-    state.bulkCancelled ? 'Download Interrupted' : 'Bulk Download Complete',
+    state.bulkAborted ? 'error' : state.bulkCancelled ? 'info' : 'success',
+    state.bulkAborted ? 'Download Stopped' : state.bulkCancelled ? 'Download Paused' : 'Bulk Download Complete',
     summaryMsg
   );
 
-  overlay.querySelector('#bpCurrent').textContent = state.bulkCancelled ? 'Interrupted — use Resume to continue.' : 'Complete!';
-  overlay.querySelector('#btnCancelBulk').textContent = 'Close';
-  overlay.querySelector('#btnCancelBulk').disabled = false;
-  overlay.querySelector('#btnCancelBulk').onclick = () => {
+  overlay.querySelector('#bpCurrent').textContent = state.bulkAborted
+    ? 'Stopped — session discarded.'
+    : state.bulkCancelled
+      ? 'Paused — use Resume in Download Manager to continue.'
+      : 'Complete!';
+
+  const ctgCloseBtn = overlay.querySelector('#btnCancelBulk');
+  ctgCloseBtn.textContent = 'Close';
+  ctgCloseBtn.disabled = false;
+  overlay.querySelector('#btnPauseBulk').style.display = 'none';
+  ctgCloseBtn.onclick = () => {
     overlay.style.opacity = '0';
     overlay.style.transition = 'opacity 0.3s';
     setTimeout(() => overlay.remove(), 300);
     renderDownloadManager();
   };
 
-  if (!state.bulkCancelled) {
+  if (!state.bulkCancelled && !state.bulkAborted) {
     setTimeout(() => {
       if (overlay.parentNode) {
         overlay.style.opacity = '0';
@@ -2176,6 +2204,7 @@ async function bulkDownloadByTA(arg1 = null) {
   const bulkDateRange     = { from: null, to: null };
 
   state.bulkCancelled = false;
+  state.bulkAborted   = false;
 
   // ── Create or Resume Session ────────────
   let session;
@@ -2244,15 +2273,28 @@ async function bulkDownloadByTA(arg1 = null) {
           <span class="batch-stat-label">Failed</span>
         </div>
       </div>
-      <button class="btn-cancel-bulk" id="btnCancelBulk">Cancel</button>
+      <div class="bulk-overlay-actions">
+        <button class="btn-pause-bulk" id="btnPauseBulk">⏸ Pause</button>
+        <button class="btn-cancel-bulk" id="btnCancelBulk">✕ Stop</button>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
 
+  overlay.querySelector('#btnPauseBulk').addEventListener('click', () => {
+    state.bulkCancelled = true;
+    overlay.querySelector('#btnPauseBulk').disabled = true;
+    overlay.querySelector('#btnCancelBulk').disabled = true;
+    overlay.querySelector('#btnPauseBulk').textContent = 'Pausing…';
+    overlay.querySelector('#bpSubtitle').textContent = 'Pausing — finishing current trial…';
+  });
+
   overlay.querySelector('#btnCancelBulk').addEventListener('click', () => {
     state.bulkCancelled = true;
+    state.bulkAborted   = true;
+    overlay.querySelector('#btnPauseBulk').disabled = true;
     overlay.querySelector('#btnCancelBulk').disabled = true;
-    overlay.querySelector('#btnCancelBulk').textContent = 'Cancelling…';
-    overlay.querySelector('#bpSubtitle').textContent = 'Cancelling — finishing current trial…';
+    overlay.querySelector('#btnCancelBulk').textContent = 'Stopping…';
+    overlay.querySelector('#bpSubtitle').textContent = 'Stopping — finishing current trial…';
   });
 
   function updateOverlay() {
@@ -2439,35 +2481,48 @@ async function bulkDownloadByTA(arg1 = null) {
   }
 
   // Finalise session
-  session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
-  session.updatedAt = Date.now();
-  await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
-  await dmSaveSession(session);
+  if (state.bulkAborted) {
+    await dmDeleteSession(session.id);
+  } else {
+    session.status    = state.bulkCancelled ? 'interrupted' : 'complete';
+    session.updatedAt = Date.now();
+    await writeManifest(taFolder, session).catch(err => console.error('Manifest write failed:', err));
+    await dmSaveSession(session);
+  }
 
   state.downloadCount += session.downloadedCount;
   if (els.downloadedStat) els.downloadedStat.textContent = state.downloadCount;
 
-  const summaryMsg = state.bulkCancelled
-    ? `Cancelled — ${session.downloadedCount} protocols saved. Click Resume to continue.`
-    : `${session.downloadedCount} English protocols saved • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
+  const ctisMsg = state.bulkAborted
+    ? `Stopped — ${session.downloadedCount} protocols saved. Session discarded.`
+    : state.bulkCancelled
+      ? `Paused — ${session.downloadedCount} protocols saved. Click Resume to continue.`
+      : `${session.downloadedCount} English protocols saved • ${session.skippedCount} skipped • ${session.nonEnCount} non-English excluded • ${session.failedCount} failed`;
 
   showToast(
-    state.bulkCancelled ? 'info' : 'success',
-    state.bulkCancelled ? 'Download Interrupted' : 'Bulk Download Complete',
-    summaryMsg
+    state.bulkAborted ? 'error' : state.bulkCancelled ? 'info' : 'success',
+    state.bulkAborted ? 'Download Stopped' : state.bulkCancelled ? 'Download Paused' : 'Bulk Download Complete',
+    ctisMsg
   );
 
-  overlay.querySelector('#bpCurrent').textContent = state.bulkCancelled ? 'Interrupted — use Resume to continue.' : 'Complete!';
-  overlay.querySelector('#btnCancelBulk').textContent = 'Close';
-  overlay.querySelector('#btnCancelBulk').disabled = false;
-  overlay.querySelector('#btnCancelBulk').onclick = () => {
+  overlay.querySelector('#bpCurrent').textContent = state.bulkAborted
+    ? 'Stopped — session discarded.'
+    : state.bulkCancelled
+      ? 'Paused — use Resume in Download Manager to continue.'
+      : 'Complete!';
+
+  const ctisCloseBtn = overlay.querySelector('#btnCancelBulk');
+  ctisCloseBtn.textContent = 'Close';
+  ctisCloseBtn.disabled = false;
+  overlay.querySelector('#btnPauseBulk').style.display = 'none';
+  ctisCloseBtn.onclick = () => {
     overlay.style.opacity = '0';
     overlay.style.transition = 'opacity 0.3s';
     setTimeout(() => overlay.remove(), 300);
     renderDownloadManager();
   };
 
-  if (!state.bulkCancelled) {
+  if (!state.bulkCancelled && !state.bulkAborted) {
     setTimeout(() => {
       if (overlay.parentNode) {
         overlay.style.opacity = '0';

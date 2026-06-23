@@ -1453,6 +1453,28 @@ body {
   color: var(--text-muted);
 }
 
+.bulk-overlay-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-pause-bulk {
+  background: none;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--amber);
+  padding: 7px 24px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.btn-pause-bulk:hover:not(:disabled) { background: var(--amber-dim); }
+.btn-pause-bulk:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .btn-cancel-bulk {
   background: none;
   border: 1px solid rgba(248, 113, 113, 0.3);
