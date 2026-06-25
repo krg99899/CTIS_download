@@ -72,7 +72,34 @@ const TA_INDICATIONS = {
   C01: ['Bacterial pneumonia','Urinary tract infection','Sepsis','Tuberculosis','Skin and soft tissue infection','Intra-abdominal infection','Bloodstream infection','Meningitis','Osteomyelitis','Endocarditis','Candidiasis','Aspergillosis','Cryptococcosis','Fungal infection NOS'],
   C02: ['COVID-19','HIV infection','Hepatitis B','Hepatitis C','Influenza','RSV infection','Herpes simplex','Herpes zoster','Cytomegalovirus infection','Dengue fever','Ebola virus disease','SARS-CoV-2','HPV infection','Monkeypox'],
   C03: ['Malaria','Leishmaniasis','Chagas disease','Schistosomiasis','Trypanosomiasis','Cryptosporidiosis','Hookworm infection','Toxoplasmosis'],
-  C04: ['Non-small cell lung cancer','Small cell lung cancer','Breast cancer','Colorectal cancer','Gastrointestinal stromal tumour','Prostate cancer','Acute myeloid leukaemia','Chronic lymphocytic leukaemia','Diffuse large B-cell lymphoma','Melanoma','Ovarian cancer','Pancreatic cancer','Bladder cancer','Glioblastoma','Hepatocellular carcinoma','Renal cell carcinoma','Multiple myeloma','Gastric cancer','Esophageal cancer','Cervical cancer','Head and neck cancer','Head and neck squamous cell carcinoma','Endometrial cancer','Myelodysplastic syndrome','Chronic myeloid leukaemia','Advanced solid tumours'],
+  C04: [
+    // Thoracic
+    'Non-small cell lung cancer','Small cell lung cancer','Mesothelioma','Thymoma','Thymic carcinoma',
+    // Breast
+    'Breast cancer','Triple-negative breast cancer',
+    // Gastrointestinal
+    'Colorectal cancer','Gastric cancer','Esophageal cancer','Gastroesophageal junction adenocarcinoma','Hepatocellular carcinoma','Pancreatic cancer','Cholangiocarcinoma','Biliary tract cancer','Gastrointestinal stromal tumour','Anal cancer',
+    // Genitourinary
+    'Prostate cancer','Bladder cancer','Urothelial carcinoma','Renal cell carcinoma','Testicular cancer',
+    // Gynaecologic
+    'Ovarian cancer','Endometrial cancer','Cervical cancer','Primary peritoneal carcinoma','Fallopian tube carcinoma','Uterine sarcoma','Vulvar cancer',
+    // CNS
+    'Glioblastoma','Low-grade glioma','Medulloblastoma','Meningioma','Brain metastases','Primary CNS lymphoma',
+    // Head & Neck
+    'Head and neck cancer','Head and neck squamous cell carcinoma','Nasopharyngeal carcinoma','Thyroid cancer','Salivary gland cancer',
+    // Skin
+    'Melanoma','Uveal melanoma','Merkel cell carcinoma','Cutaneous squamous cell carcinoma','Basal cell carcinoma',
+    // Haematologic malignancies
+    'Acute myeloid leukaemia','Acute lymphoblastic leukaemia','Chronic lymphocytic leukaemia','Chronic myeloid leukaemia','Diffuse large B-cell lymphoma','Hodgkin lymphoma','Follicular lymphoma','Mantle cell lymphoma','Marginal zone lymphoma','Peripheral T-cell lymphoma','Multiple myeloma','Myelodysplastic syndrome','Myelofibrosis','Waldenstrom macroglobulinaemia',
+    // Bone & Soft Tissue
+    'Soft tissue sarcoma','Osteosarcoma','Ewing sarcoma','Rhabdomyosarcoma','Leiomyosarcoma','Liposarcoma',
+    // Neuroendocrine
+    'Neuroendocrine tumour','Pancreatic neuroendocrine tumour','Phaeochromocytoma','Paraganglioma','Adrenocortical carcinoma',
+    // Paediatric
+    'Neuroblastoma','Wilms tumour','Retinoblastoma',
+    // Pan-tumour / Other
+    'Advanced solid tumours','Carcinoma of unknown primary'
+  ],
   C05: ['Rheumatoid arthritis','Osteoarthritis','Ankylosing spondylitis','Psoriatic arthritis','Systemic lupus erythematosus','Gout','Osteoporosis','Fibromyalgia','Juvenile idiopathic arthritis','Spondyloarthropathy'],
   C06: ['Crohn\'s disease','Ulcerative colitis','Irritable bowel syndrome','Gastroesophageal reflux disease','Non-alcoholic steatohepatitis','Liver cirrhosis','Coeliac disease','Eosinophilic esophagitis','Cholestatic liver disease','Primary biliary cholangitis'],
   C07: ['Periodontitis','Oral mucositis','Sjögren\'s syndrome','Dental caries','Oral lichen planus'],
